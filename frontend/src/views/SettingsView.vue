@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { settingsApi } from '@/composables/useApi'
-import axios from 'axios'
+import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 
 // --- Types ---
 interface Provider {
@@ -84,15 +84,22 @@ const extraKeys = ref<{ key: string; label: string; value: string; saving: boole
 ])
 
 const loaded = ref(false)
+const backendState = useBackendState()
+const pageError = ref('')
+
+function providerState(providerId: string): ProviderState {
+  return providerStates[providerId]!
+}
 
 // --- Load settings from backend ---
 async function loadSettings() {
+  pageError.value = ''
   try {
     const settings = await settingsApi.list()
     const map = new Map(settings.map((s: { key: string; value: string }) => [s.key, s.value]))
 
     for (const p of providers) {
-      const state = providerStates[p.id]
+      const state = providerState(p.id)
       const key = map.get(p.fields.apiKey)
       const url = map.get(p.fields.baseUrl)
       if (key) { state.apiKey = key; state.enabled = true }
@@ -110,6 +117,8 @@ async function loadSettings() {
     }
   } catch (err) {
     console.error('[ARTA:Settings] Failed to load settings:', err)
+    pageError.value = err instanceof Error ? err.message : 'Failed to load settings.'
+    await checkBackend(true)
   }
   loaded.value = true
 }
@@ -117,7 +126,13 @@ async function loadSettings() {
 // --- Save provider ---
 async function saveProvider(providerId: string) {
   const p = providers.find(x => x.id === providerId)!
-  const state = providerStates[providerId]
+  const state = providerState(providerId)
+  pageError.value = ''
+  if (backendState.status !== 'online') {
+    pageError.value = getBackendOfflineMessage('provider settings')
+    return
+  }
+
   state.saving = true
   try {
     // Save API key
@@ -131,6 +146,8 @@ async function saveProvider(providerId: string) {
     console.log(`[ARTA:Settings] Saved provider ${providerId}`)
   } catch (err) {
     console.error(`[ARTA:Settings] Failed to save provider ${providerId}:`, err)
+    pageError.value = err instanceof Error ? err.message : `Failed to save provider ${providerId}.`
+    await checkBackend(true)
   } finally {
     state.saving = false
   }
@@ -139,12 +156,12 @@ async function saveProvider(providerId: string) {
 // --- Test connection ---
 async function testProvider(providerId: string) {
   const p = providers.find(x => x.id === providerId)!
-  const state = providerStates[providerId]
+  const state = providerState(providerId)
+  pageError.value = ''
   state.testing = true
   state.testResult = null
 
   try {
-    const baseUrl = state.baseUrl.replace(/\/+$/, '')
     const apiKey = state.apiKey
 
     if (!apiKey || apiKey.includes('***')) {
@@ -152,46 +169,25 @@ async function testProvider(providerId: string) {
       return
     }
 
-    if (providerId === 'openai') {
-      // Test OpenAI-compatible: GET /models
-      const resp = await axios.get(`${baseUrl}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        timeout: 10000,
-      })
-      const models = resp.data?.data
-      if (Array.isArray(models)) {
-        state.testResult = { ok: true, message: `Connected! ${models.length} models available` }
-      } else {
-        state.testResult = { ok: true, message: 'Connected! (non-standard model list response)' }
-      }
-    } else if (providerId === 'anthropic') {
-      // Test Anthropic: POST /v1/messages with minimal payload
-      try {
-        await axios.post(
-          `${baseUrl}/v1/messages`,
-          { model: 'claude-haiku-4-5-20251001', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] },
-          { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, timeout: 15000 }
-        )
-        state.testResult = { ok: true, message: 'Connected! API key is valid' }
-      } catch (err: unknown) {
-        if (axios.isAxiosError(err) && err.response) {
-          // 401 = bad key, anything else means we reached the server
-          if (err.response.status === 401) {
-            state.testResult = { ok: false, message: 'Invalid API key (401 Unauthorized)' }
-          } else {
-            // 400, 429, etc. still mean connection works
-            state.testResult = { ok: true, message: `Connected! (server returned ${err.response.status})` }
-          }
-        } else {
-          throw err
-        }
-      }
+    if (backendState.status !== 'online') {
+      state.testResult = { ok: false, message: getBackendOfflineMessage('API key validation') }
+      return
+    }
+
+    const resp = await settingsApi.validate({
+      key: p.fields.apiKey,
+      value: apiKey,
+      base_url: state.baseUrl,
+    })
+
+    state.testResult = {
+      ok: resp.valid,
+      message: resp.message,
     }
   } catch (err: unknown) {
-    const msg = axios.isAxiosError(err)
-      ? (err.response?.data?.error?.message || err.message)
-      : (err instanceof Error ? err.message : String(err))
+    const msg = err instanceof Error ? err.message : String(err)
     state.testResult = { ok: false, message: `Connection failed: ${msg}` }
+    await checkBackend(true)
   } finally {
     state.testing = false
   }
@@ -199,6 +195,11 @@ async function testProvider(providerId: string) {
 
 // --- Save model role ---
 async function saveModelRole(role: ModelRole) {
+  pageError.value = ''
+  if (backendState.status !== 'online') {
+    pageError.value = getBackendOfflineMessage('model assignment updates')
+    return
+  }
   role.saving = true
   try {
     await settingsApi.update({ key: role.key, value: role.value })
@@ -206,6 +207,8 @@ async function saveModelRole(role: ModelRole) {
     console.log(`[ARTA:Settings] Saved model role ${role.key} = ${role.value}`)
   } catch (err) {
     console.error(`[ARTA:Settings] Failed to save model role ${role.key}:`, err)
+    pageError.value = err instanceof Error ? err.message : `Failed to save ${role.key}.`
+    await checkBackend(true)
   } finally {
     role.saving = false
   }
@@ -213,12 +216,19 @@ async function saveModelRole(role: ModelRole) {
 
 // --- Save extra key ---
 async function saveExtraKey(ek: { key: string; value: string; saving: boolean; dirty: boolean }) {
+  pageError.value = ''
+  if (backendState.status !== 'online') {
+    pageError.value = getBackendOfflineMessage('data source key updates')
+    return
+  }
   ek.saving = true
   try {
     await settingsApi.update({ key: ek.key, value: ek.value, is_sensitive: true })
     ek.dirty = false
   } catch (err) {
     console.error(`[ARTA:Settings] Failed to save ${ek.key}:`, err)
+    pageError.value = err instanceof Error ? err.message : `Failed to save ${ek.key}.`
+    await checkBackend(true)
   } finally {
     ek.saving = false
   }
@@ -233,6 +243,12 @@ onMounted(loadSettings)
     <p class="text-sm text-[var(--text-secondary)] mb-6">
       Configure LLM providers, model assignments, and API keys.
     </p>
+    <div
+      v-if="pageError"
+      class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
+    >
+      {{ pageError }}
+    </div>
 
     <!-- Loading skeleton -->
     <div v-if="!loaded" class="space-y-4">
@@ -251,7 +267,7 @@ onMounted(loadSettings)
             v-for="p in providers"
             :key="p.id"
             class="rounded-xl border transition-colors"
-            :class="providerStates[p.id].enabled
+            :class="providerState(p.id).enabled
               ? 'border-[var(--accent-primary)]/30 bg-[var(--accent-primary)]/5'
               : 'border-[var(--glass-border)] bg-[var(--glass-bg)]'"
           >
@@ -262,7 +278,7 @@ onMounted(loadSettings)
                 <div class="flex items-center gap-2">
                   <span class="font-semibold text-[var(--text-primary)]">{{ p.name }}</span>
                   <span
-                    v-if="providerStates[p.id].enabled"
+                    v-if="providerState(p.id).enabled"
                     class="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--success)]/15 text-[var(--success)] font-medium"
                   >
                     CONFIGURED
@@ -278,11 +294,11 @@ onMounted(loadSettings)
               <div>
                 <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">API Key</label>
                 <input
-                  v-model="providerStates[p.id].apiKey"
+                  v-model="providerState(p.id).apiKey"
                   type="password"
                   class="glass-input"
-                  :placeholder="providerStates[p.id].enabled ? '••••••••••••••••' : 'sk-... or your API key'"
-                  @input="providerStates[p.id].dirty = true; providerStates[p.id].testResult = null"
+                  :placeholder="providerState(p.id).enabled ? '••••••••••••••••' : 'sk-... or your API key'"
+                  @input="providerState(p.id).dirty = true; providerState(p.id).testResult = null"
                 />
               </div>
 
@@ -295,11 +311,11 @@ onMounted(loadSettings)
                   </span>
                 </label>
                 <input
-                  v-model="providerStates[p.id].baseUrl"
+                  v-model="providerState(p.id).baseUrl"
                   type="text"
                   class="glass-input font-mono text-xs"
                   :placeholder="p.defaults.baseUrl"
-                  @input="providerStates[p.id].dirty = true; providerStates[p.id].testResult = null"
+                  @input="providerState(p.id).dirty = true; providerState(p.id).testResult = null"
                 />
               </div>
 
@@ -307,21 +323,21 @@ onMounted(loadSettings)
               <div class="flex items-center gap-2 pt-1">
                 <button
                   class="glass-btn glass-btn-primary text-sm"
-                  :disabled="providerStates[p.id].saving"
+                  :disabled="providerState(p.id).saving || backendState.status !== 'online'"
                   @click="saveProvider(p.id)"
                 >
-                  {{ providerStates[p.id].saving ? 'Saving...' : 'Save' }}
+                  {{ providerState(p.id).saving ? 'Saving...' : 'Save' }}
                 </button>
                 <button
                   class="glass-btn text-sm"
-                  :disabled="providerStates[p.id].testing"
+                  :disabled="providerState(p.id).testing || backendState.status !== 'online'"
                   @click="testProvider(p.id)"
                 >
-                  {{ providerStates[p.id].testing ? 'Testing...' : 'Test Connection' }}
+                  {{ providerState(p.id).testing ? 'Testing...' : 'Test Connection' }}
                 </button>
                 <button
                   class="glass-btn text-sm text-[var(--text-muted)]"
-                  @click="providerStates[p.id].baseUrl = p.defaults.baseUrl; providerStates[p.id].dirty = true"
+                  @click="providerState(p.id).baseUrl = p.defaults.baseUrl; providerState(p.id).dirty = true"
                 >
                   Reset URL
                 </button>
@@ -329,14 +345,14 @@ onMounted(loadSettings)
 
               <!-- Test result -->
               <div
-                v-if="providerStates[p.id].testResult"
+                v-if="providerState(p.id).testResult"
                 class="flex items-start gap-2 px-3 py-2 rounded-lg text-sm"
-                :class="providerStates[p.id].testResult!.ok
+                :class="providerState(p.id).testResult!.ok
                   ? 'bg-[var(--success)]/10 text-[var(--success)]'
                   : 'bg-[var(--error)]/10 text-[var(--error)]'"
               >
-                <span class="shrink-0 mt-0.5">{{ providerStates[p.id].testResult!.ok ? '✓' : '✗' }}</span>
-                <span>{{ providerStates[p.id].testResult!.message }}</span>
+                <span class="shrink-0 mt-0.5">{{ providerState(p.id).testResult!.ok ? '✓' : '✗' }}</span>
+                <span>{{ providerState(p.id).testResult!.message }}</span>
               </div>
             </div>
           </div>
@@ -376,7 +392,7 @@ onMounted(loadSettings)
             <button
               class="glass-btn text-xs shrink-0"
               :class="role.dirty ? 'glass-btn-primary' : ''"
-              :disabled="role.saving || !role.value"
+              :disabled="role.saving || !role.value || backendState.status !== 'online'"
               @click="saveModelRole(role)"
             >
               {{ role.saving ? '...' : role.dirty ? 'Save' : 'Saved' }}
@@ -409,7 +425,7 @@ onMounted(loadSettings)
             <button
               class="glass-btn text-xs shrink-0"
               :class="ek.dirty ? 'glass-btn-primary' : ''"
-              :disabled="ek.saving || !ek.value"
+              :disabled="ek.saving || !ek.value || backendState.status !== 'online'"
               @click="saveExtraKey(ek)"
             >
               {{ ek.saving ? '...' : ek.dirty ? 'Save' : 'Saved' }}

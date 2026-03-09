@@ -104,7 +104,7 @@ export interface Report {
   content_markdown: string
   chart_configs: ChartConfig[][]
   version: number
-  status: 'draft' | 'generating' | 'completed'
+  status: 'draft' | 'generating' | 'completed' | 'failed'
   created_at: string
 }
 

@@ -84,6 +84,7 @@ validate_router = APIRouter(prefix="/validate-key", tags=["settings"])
 class ValidateKeyRequest(BaseModel):
     key: str  # e.g. "openai_api_key"
     value: str  # the actual key value
+    base_url: str | None = None
 
 
 class ValidateKeyResponse(BaseModel):
@@ -91,8 +92,7 @@ class ValidateKeyResponse(BaseModel):
     message: str
 
 
-@validate_router.post("", response_model=ValidateKeyResponse)
-async def validate_api_key(body: ValidateKeyRequest):
+async def _validate_api_key(body: ValidateKeyRequest):
     """Test if an API key is valid by making a minimal API call."""
     import litellm
 
@@ -108,12 +108,16 @@ async def validate_api_key(body: ValidateKeyRequest):
     model, env_var = key_model_map[body.key]
     old_val = os.environ.get(env_var, "")
     os.environ[env_var] = body.value
+    completion_kwargs = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Hi"}],
+        "max_tokens": 5,
+    }
+    if body.base_url:
+        completion_kwargs["api_base"] = body.base_url.rstrip("/")
+
     try:
-        await litellm.acompletion(
-            model=model,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=5,
-        )
+        await litellm.acompletion(**completion_kwargs)
         return ValidateKeyResponse(valid=True, message="API key is valid")
     except Exception as e:
         err = str(e)
@@ -125,3 +129,14 @@ async def validate_api_key(body: ValidateKeyRequest):
             os.environ[env_var] = old_val
         elif env_var in os.environ:
             del os.environ[env_var]
+
+
+@validate_router.post("", response_model=ValidateKeyResponse)
+async def validate_api_key(body: ValidateKeyRequest):
+    return await _validate_api_key(body)
+
+
+@router.post("/validate-key", response_model=ValidateKeyResponse)
+async def validate_api_key_compat(body: ValidateKeyRequest):
+    """Compatibility endpoint for older callers that still hit /api/settings/validate-key."""
+    return await _validate_api_key(body)

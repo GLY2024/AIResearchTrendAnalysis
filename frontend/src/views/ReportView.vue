@@ -3,6 +3,7 @@ import { ref, onMounted, watch } from 'vue'
 import type { Report } from '@/types'
 import { reportApi, exportApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
+import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import GlassCard from '@/components/common/GlassCard.vue'
 import StreamingText from '@/components/chat/StreamingText.vue'
 
@@ -30,20 +31,27 @@ use([
 ])
 
 const sessionStore = useSessionStore()
+const backendState = useBackendState()
 const reports = ref<Report[]>([])
 const selectedReport = ref<Report | null>(null)
 const loading = ref(false)
 const generating = ref(false)
 const showExportDialog = ref(false)
+const actionError = ref('')
 
 async function loadReports() {
   if (!sessionStore.currentSession) return
   loading.value = true
+  actionError.value = ''
   try {
     reports.value = await reportApi.list(sessionStore.currentSession.id)
-    if (reports.value.length && !selectedReport.value) {
-      selectedReport.value = reports.value[0]
+    const firstReport = reports.value[0]
+    if (firstReport && !selectedReport.value) {
+      selectedReport.value = firstReport
     }
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to load reports.'
+    await checkBackend(true)
   } finally {
     loading.value = false
   }
@@ -51,6 +59,11 @@ async function loadReports() {
 
 async function generateReport(parentId?: number) {
   if (!sessionStore.currentSession) return
+  actionError.value = ''
+  if (backendState.status !== 'online') {
+    actionError.value = getBackendOfflineMessage('report generation')
+    return
+  }
   generating.value = true
   try {
     const report = await reportApi.generate({
@@ -61,6 +74,9 @@ async function generateReport(parentId?: number) {
     selectedReport.value = report
     // Poll for completion
     pollForCompletion(report.id)
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to generate the report.'
+    await checkBackend(true)
   } finally {
     generating.value = false
   }
@@ -92,6 +108,12 @@ function chartTheme(option: Record<string, unknown>) {
 
 function downloadExport(format: 'ris' | 'bibtex') {
   if (!sessionStore.currentSession) return
+  if (backendState.status !== 'online') {
+    actionError.value = getBackendOfflineMessage('export')
+    showExportDialog.value = false
+    return
+  }
+
   const url = format === 'ris'
     ? exportApi.risUrl(sessionStore.currentSession.id)
     : exportApi.bibtexUrl(sessionStore.currentSession.id)
@@ -125,14 +147,14 @@ onMounted(loadReports)
       <div class="flex gap-2">
         <button
           class="glass-btn"
-          :disabled="!sessionStore.currentSession"
+          :disabled="!sessionStore.currentSession || backendState.status !== 'online'"
           @click="showExportDialog = true"
         >
           Export
         </button>
         <button
           class="glass-btn glass-btn-primary"
-          :disabled="generating || !sessionStore.currentSession"
+          :disabled="generating || !sessionStore.currentSession || backendState.status !== 'online'"
           @click="generateReport()"
         >
           <span v-if="generating" class="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin mr-2" />
@@ -146,6 +168,12 @@ onMounted(loadReports)
     </div>
 
     <template v-else>
+      <div
+        v-if="actionError"
+        class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
+      >
+        {{ actionError }}
+      </div>
       <div v-if="loading" class="text-[var(--text-muted)]">Loading reports...</div>
 
       <div v-else-if="reports.length === 0" class="text-[var(--text-muted)]">
@@ -188,7 +216,7 @@ onMounted(loadReports)
             <button
               v-if="selectedReport.status === 'completed'"
               class="glass-btn text-xs"
-              :disabled="generating"
+              :disabled="generating || backendState.status !== 'online'"
               @click="generateReport(selectedReport.id)"
             >
               Update Report

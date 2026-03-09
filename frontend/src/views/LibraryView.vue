@@ -3,13 +3,15 @@ import { ref, computed, onMounted, watch } from 'vue'
 import type { Paper } from '@/types'
 import { paperApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
-import axios from 'axios'
+import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 
 const sessionStore = useSessionStore()
+const backendState = useBackendState()
 const papers = ref<Paper[]>([])
 const loading = ref(false)
 const expandedId = ref<number | null>(null)
 const selectedIds = ref<Set<number>>(new Set())
+const actionError = ref('')
 
 // Filters
 const filterSource = ref('')
@@ -28,14 +30,16 @@ const availableMethods = ref<string[]>([])
 async function loadPapers() {
   if (!sessionStore.currentSession) return
   loading.value = true
+  actionError.value = ''
   try {
     papers.value = await paperApi.list(sessionStore.currentSession.id)
     // Load filter options
-    const resp = await axios.get('/api/papers/sources', {
-      params: { session_id: sessionStore.currentSession.id }
-    })
-    availableSources.value = resp.data.sources
-    availableMethods.value = resp.data.discovery_methods
+    const resp = await paperApi.sources(sessionStore.currentSession.id)
+    availableSources.value = resp.sources
+    availableMethods.value = resp.discovery_methods
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to load papers.'
+    await checkBackend(true)
   } finally {
     loading.value = false
   }
@@ -109,27 +113,44 @@ function selectAll() {
 
 async function batchInclude(include: boolean) {
   if (selectedIds.value.size === 0) return
-  await axios.post('/api/papers/batch-update', {
-    paper_ids: [...selectedIds.value],
-    is_included: include,
-  })
-  // Update local state
-  for (const p of papers.value) {
-    if (selectedIds.value.has(p.id)) {
-      p.is_included = include
-    }
+  actionError.value = ''
+  if (backendState.status !== 'online') {
+    actionError.value = getBackendOfflineMessage('paper updates')
+    return
   }
-  selectedIds.value = new Set()
+
+  try {
+    await paperApi.batchUpdate([...selectedIds.value], include)
+    // Update local state
+    for (const p of papers.value) {
+      if (selectedIds.value.has(p.id)) {
+        p.is_included = include
+      }
+    }
+    selectedIds.value = new Set()
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to update selected papers.'
+    await checkBackend(true)
+  }
 }
 
 async function batchDelete() {
   if (selectedIds.value.size === 0) return
   if (!confirm(`Delete ${selectedIds.value.size} papers?`)) return
-  await axios.post('/api/papers/batch-delete', {
-    paper_ids: [...selectedIds.value],
-  })
-  papers.value = papers.value.filter(p => !selectedIds.value.has(p.id))
-  selectedIds.value = new Set()
+  actionError.value = ''
+  if (backendState.status !== 'online') {
+    actionError.value = getBackendOfflineMessage('paper deletion')
+    return
+  }
+
+  try {
+    await paperApi.batchDelete([...selectedIds.value])
+    papers.value = papers.value.filter(p => !selectedIds.value.has(p.id))
+    selectedIds.value = new Set()
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to delete selected papers.'
+    await checkBackend(true)
+  }
 }
 
 watch(() => sessionStore.currentSessionId, loadPapers)
@@ -151,6 +172,12 @@ onMounted(loadPapers)
     </div>
 
     <template v-else>
+      <div
+        v-if="actionError"
+        class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
+      >
+        {{ actionError }}
+      </div>
       <!-- Search bar -->
       <div class="mb-4">
         <input
@@ -194,9 +221,9 @@ onMounted(loadPapers)
       <!-- Batch actions -->
       <div v-if="selectedIds.size > 0" class="flex gap-2 mb-3 items-center">
         <span class="text-sm text-[var(--text-secondary)]">{{ selectedIds.size }} selected</span>
-        <button class="glass-btn text-xs" @click="batchInclude(true)">Include</button>
-        <button class="glass-btn text-xs" @click="batchInclude(false)">Exclude</button>
-        <button class="glass-btn text-xs text-[var(--error)]" @click="batchDelete">Delete</button>
+        <button class="glass-btn text-xs" :disabled="backendState.status !== 'online'" @click="batchInclude(true)">Include</button>
+        <button class="glass-btn text-xs" :disabled="backendState.status !== 'online'" @click="batchInclude(false)">Exclude</button>
+        <button class="glass-btn text-xs text-[var(--error)]" :disabled="backendState.status !== 'online'" @click="batchDelete">Delete</button>
       </div>
 
       <div v-if="loading" class="text-[var(--text-muted)]">Loading papers...</div>

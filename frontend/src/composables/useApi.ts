@@ -1,13 +1,9 @@
 import axios from 'axios'
 import type { Session, ChatMessage, SearchPlan, Paper, AnalysisRun, Report, AppSetting } from '@/types'
-
-// In Tauri mode, requests go directly to backend; in dev mode, Vite proxy handles it
-const BACKEND_BASE = (window as Record<string, unknown>).__TAURI_INTERNALS__
-  ? 'http://127.0.0.1:8721/api'
-  : '/api'
+import { getApiBaseUrl, markBackendOffline, markBackendOnline, isBackendOfflineError } from '@/composables/useBackend'
 
 const api = axios.create({
-  baseURL: BACKEND_BASE,
+  baseURL: getApiBaseUrl(),
   timeout: 30000,
 })
 
@@ -19,6 +15,7 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (response) => {
+    markBackendOnline()
     console.log(`[ARTA:API] ${response.status} ${response.config.url}`)
     return response
   },
@@ -26,6 +23,9 @@ api.interceptors.response.use(
     const status = error.response?.status ?? 'NETWORK_ERROR'
     const url = error.config?.url ?? '?'
     const msg = error.response?.data?.detail ?? error.message
+    if (isBackendOfflineError(error)) {
+      markBackendOffline(error)
+    }
     console.error(`[ARTA:API] ${status} ${url}: ${msg}`)
     return Promise.reject(error)
   }
@@ -70,6 +70,19 @@ export const paperApi = {
   delete: (id: number) => api.delete(`/papers/${id}`),
   count: (sessionId: number) =>
     api.get<{ count: number }>('/papers/count', { params: { session_id: sessionId } }).then(r => r.data),
+  sources: (sessionId: number) =>
+    api.get<{ sources: string[]; discovery_methods: string[] }>('/papers/sources', {
+      params: { session_id: sessionId },
+    }).then(r => r.data),
+  batchUpdate: (paperIds: number[], isIncluded: boolean) =>
+    api.post('/papers/batch-update', {
+      paper_ids: paperIds,
+      is_included: isIncluded,
+    }),
+  batchDelete: (paperIds: number[]) =>
+    api.post('/papers/batch-delete', {
+      paper_ids: paperIds,
+    }),
 }
 
 // Analysis
@@ -96,16 +109,14 @@ export const settingsApi = {
   update: (data: { key: string; value: string; is_sensitive?: boolean }) =>
     api.put('/settings', data).then(r => r.data),
   delete: (key: string) => api.delete('/settings', { params: { key } }),
+  validate: (data: { key: string; value: string; base_url?: string }) =>
+    api.post<{ valid: boolean; message: string }>('/validate-key', data).then(r => r.data),
 }
 
 // Export
-const exportBase = (window as Record<string, unknown>).__TAURI_INTERNALS__
-  ? 'http://127.0.0.1:8721/api'
-  : '/api'
-
 export const exportApi = {
-  risUrl: (sessionId: number) => `${exportBase}/export/ris/${sessionId}`,
-  bibtexUrl: (sessionId: number) => `${exportBase}/export/bibtex/${sessionId}`,
+  risUrl: (sessionId: number) => `${getApiBaseUrl()}/export/ris/${sessionId}`,
+  bibtexUrl: (sessionId: number) => `${getApiBaseUrl()}/export/bibtex/${sessionId}`,
 }
 
 // Health

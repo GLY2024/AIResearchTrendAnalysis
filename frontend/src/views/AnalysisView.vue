@@ -3,6 +3,7 @@ import { ref, onMounted, watch } from 'vue'
 import type { AnalysisRun } from '@/types'
 import { analysisApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
+import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import GlassCard from '@/components/common/GlassCard.vue'
 
 import VChart from 'vue-echarts'
@@ -32,9 +33,11 @@ use([
 ])
 
 const sessionStore = useSessionStore()
+const backendState = useBackendState()
 const runs = ref<AnalysisRun[]>([])
 const loading = ref(false)
 const running = ref<string | null>(null)
+const actionError = ref('')
 
 const analysisTypes = [
   { key: 'bibliometrics', label: 'Bibliometrics', description: 'H-index, citations, top authors, journals' },
@@ -47,8 +50,12 @@ const analysisTypes = [
 async function loadRuns() {
   if (!sessionStore.currentSession) return
   loading.value = true
+  actionError.value = ''
   try {
     runs.value = await analysisApi.list(sessionStore.currentSession.id)
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to load analyses.'
+    await checkBackend(true)
   } finally {
     loading.value = false
   }
@@ -56,6 +63,11 @@ async function loadRuns() {
 
 async function runAnalysis(type: string) {
   if (!sessionStore.currentSession) return
+  actionError.value = ''
+  if (backendState.status !== 'online') {
+    actionError.value = getBackendOfflineMessage('analysis')
+    return
+  }
   running.value = type
   try {
     const result = await analysisApi.create({
@@ -65,6 +77,9 @@ async function runAnalysis(type: string) {
     runs.value.unshift(result)
     // Poll for completion since it runs as background task
     pollForCompletion(result.id)
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to start analysis.'
+    await checkBackend(true)
   } finally {
     running.value = null
   }
@@ -114,13 +129,19 @@ onMounted(loadRuns)
     </div>
 
     <template v-else>
+      <div
+        v-if="actionError"
+        class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
+      >
+        {{ actionError }}
+      </div>
       <!-- Action buttons -->
       <div class="flex flex-wrap gap-3 mb-6">
         <button
           v-for="t in analysisTypes"
           :key="t.key"
           class="glass-btn glass-btn-primary"
-          :disabled="running !== null"
+          :disabled="running !== null || backendState.status !== 'online'"
           @click="runAnalysis(t.key)"
         >
           <span v-if="running === t.key" class="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin mr-2" />

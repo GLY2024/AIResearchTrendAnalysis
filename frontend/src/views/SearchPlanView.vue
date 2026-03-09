@@ -4,12 +4,15 @@ import type { SearchPlan } from '@/types'
 import { searchApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
 import { useWebSocket } from '@/composables/useWebSocket'
+import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import GlassCard from '@/components/common/GlassCard.vue'
 
 const sessionStore = useSessionStore()
+const backendState = useBackendState()
 const plans = ref<SearchPlan[]>([])
 const loading = ref(false)
 const expandedId = ref<number | null>(null)
+const actionError = ref('')
 
 // Search progress tracking
 interface SearchProgress {
@@ -76,8 +79,12 @@ function setupWebSocket() {
 async function loadPlans() {
   if (!sessionStore.currentSession) return
   loading.value = true
+  actionError.value = ''
   try {
     plans.value = await searchApi.listPlans(sessionStore.currentSession.id)
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to load search plans.'
+    await checkBackend(true)
   } finally {
     loading.value = false
   }
@@ -85,9 +92,20 @@ async function loadPlans() {
 }
 
 async function handleAction(planId: number, action: 'approve' | 'reject') {
-  const updated = await searchApi.planAction(planId, action)
-  const idx = plans.value.findIndex(p => p.id === planId)
-  if (idx !== -1) plans.value[idx] = updated
+  actionError.value = ''
+  if (backendState.status !== 'online') {
+    actionError.value = getBackendOfflineMessage('search plan approval')
+    return
+  }
+
+  try {
+    const updated = await searchApi.planAction(planId, action)
+    const idx = plans.value.findIndex(p => p.id === planId)
+    if (idx !== -1) plans.value[idx] = updated
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to update the search plan.'
+    await checkBackend(true)
+  }
 }
 
 function toggle(id: number) {
@@ -128,6 +146,13 @@ onUnmounted(() => {
     </div>
 
     <div v-else-if="loading" class="text-[var(--text-muted)]">Loading plans...</div>
+
+    <div
+      v-if="actionError"
+      class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
+    >
+      {{ actionError }}
+    </div>
 
     <div v-else-if="plans.length === 0" class="text-[var(--text-muted)]">
       No search plans yet. Ask the AI to create one in Chat.
@@ -242,12 +267,14 @@ onUnmounted(() => {
           <div v-if="plan.status === 'draft'" class="flex gap-3 pt-2">
             <button
               class="glass-btn glass-btn-primary"
+              :disabled="backendState.status !== 'online'"
               @click.stop="handleAction(plan.id, 'approve')"
             >
               Approve & Execute
             </button>
             <button
               class="glass-btn"
+              :disabled="backendState.status !== 'online'"
               @click.stop="handleAction(plan.id, 'reject')"
             >
               Reject

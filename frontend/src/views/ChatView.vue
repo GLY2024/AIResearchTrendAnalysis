@@ -1,19 +1,22 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch, onUnmounted } from 'vue'
+import { computed, ref, onMounted, nextTick, watch, onUnmounted } from 'vue'
 import type { ChatMessage as ChatMessageType } from '@/types'
 import { chatApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
 import { useWebSocket } from '@/composables/useWebSocket'
+import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 
 const sessionStore = useSessionStore()
+const backendState = useBackendState()
 const messages = ref<ChatMessageType[]>([])
 const loading = ref(false)
 const streaming = ref(false)
 const streamingContent = ref('')
 const scrollContainer = ref<HTMLElement | null>(null)
 const planGenerating = ref(false)
+const actionError = ref('')
 
 // WebSocket connection - reactive to session changes
 let ws: ReturnType<typeof useWebSocket> | null = null
@@ -79,10 +82,16 @@ function setupWebSocket() {
 
 async function loadMessages() {
   if (!sessionStore.currentSession) return
-  messages.value = await chatApi.getMessages(sessionStore.currentSession.id)
-  await nextTick()
-  scrollToBottom()
-  setupWebSocket()
+  actionError.value = ''
+  try {
+    messages.value = await chatApi.getMessages(sessionStore.currentSession.id)
+    await nextTick()
+    scrollToBottom()
+    setupWebSocket()
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to load chat history.'
+    await checkBackend(true)
+  }
 }
 
 function scrollToBottom() {
@@ -93,8 +102,15 @@ function scrollToBottom() {
 
 async function handleSend(content: string) {
   console.log('[ARTA:Chat] handleSend called, session:', sessionStore.currentSession?.id, 'ws connected:', ws?.connected.value)
+  actionError.value = ''
   if (!sessionStore.currentSession) {
     console.warn('[ARTA:Chat] No session selected, ignoring send')
+    actionError.value = 'Select or create a session before sending messages.'
+    return
+  }
+
+  if (backendState.status !== 'online') {
+    actionError.value = getBackendOfflineMessage('chat')
     return
   }
 
@@ -113,9 +129,13 @@ async function handleSend(content: string) {
   await nextTick()
   scrollToBottom()
 
-  if (planCmd && ws) {
+  if (planCmd && ws?.connected.value) {
     // Generate search plan via WebSocket
     ws.send('generate_plan', { topic: planCmd[1] })
+    return
+  } else if (planCmd) {
+    actionError.value = 'Search plan generation requires a live backend WebSocket connection.'
+    await checkBackend(true)
     return
   }
 
@@ -123,7 +143,11 @@ async function handleSend(content: string) {
   if (ws && ws.connected.value) {
     loading.value = true
     streamingContent.value = ''
-    ws.send('chat_send', { content })
+    if (!ws.send('chat_send', { content })) {
+      loading.value = false
+      actionError.value = 'Live chat connection dropped before the message could be sent.'
+      await checkBackend(true)
+    }
   } else {
     // Fallback to REST
     loading.value = true
@@ -134,11 +158,13 @@ async function handleSend(content: string) {
       })
       messages.value.push(reply)
     } catch {
+      actionError.value = 'Failed to reach the backend. Your message was not processed.'
+      await checkBackend(true)
       messages.value.push({
         id: Date.now() + 1,
         session_id: sessionStore.currentSession.id,
         role: 'assistant',
-        content: 'Sorry, something went wrong. Please try again.',
+        content: 'Backend is offline or unreachable. Start it and try again.',
         created_at: new Date().toISOString(),
       })
     } finally {
@@ -150,10 +176,32 @@ async function handleSend(content: string) {
 }
 
 function handleGeneratePlan() {
-  if (!sessionStore.currentSession || !ws) return
+  actionError.value = ''
+  if (!sessionStore.currentSession || !ws) {
+    actionError.value = 'Select a session before generating a search plan.'
+    return
+  }
+  if (backendState.status !== 'online') {
+    actionError.value = getBackendOfflineMessage('search plan generation')
+    return
+  }
   const topic = sessionStore.currentSession.title
-  ws.send('generate_plan', { topic })
+  if (!ws.connected.value || !ws.send('generate_plan', { topic })) {
+    actionError.value = 'Search plan generation requires a live backend WebSocket connection.'
+    void checkBackend(true)
+  }
 }
+
+const inputDisabled = computed(() => {
+  return loading.value || streaming.value || backendState.status !== 'online'
+})
+
+const inputPlaceholder = computed(() => {
+  if (backendState.status !== 'online') {
+    return 'Backend offline. Start the backend to send messages.'
+  }
+  return 'Type a message...'
+})
 
 watch(() => sessionStore.currentSessionId, loadMessages)
 onMounted(loadMessages)
@@ -192,6 +240,12 @@ onUnmounted(() => {
 
     <!-- Chat area -->
     <template v-else>
+      <div
+        v-if="actionError"
+        class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
+      >
+        {{ actionError }}
+      </div>
       <div
         ref="scrollContainer"
         class="flex-1 overflow-y-auto space-y-4 pr-2 pb-4"
@@ -242,7 +296,11 @@ onUnmounted(() => {
 
       <!-- Input -->
       <div class="mt-2">
-        <ChatInput @send="handleSend" :disabled="loading || streaming" />
+        <ChatInput
+          :disabled="inputDisabled"
+          :placeholder="inputPlaceholder"
+          @send="handleSend"
+        />
       </div>
     </template>
   </div>

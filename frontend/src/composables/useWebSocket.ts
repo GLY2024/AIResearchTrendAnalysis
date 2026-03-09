@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import type { WSEvent } from '@/types'
+import { getWebSocketUrl, markBackendOffline, markBackendOnline } from '@/composables/useBackend'
 
 export function useWebSocket(sessionId: string | number) {
   const connected = ref(false)
@@ -11,15 +12,13 @@ export function useWebSocket(sessionId: string | number) {
 
   function connect() {
     intentionalClose = false
-    const isTauri = !!(window as Record<string, unknown>).__TAURI_INTERNALS__
-    const url = isTauri
-      ? `ws://127.0.0.1:8721/ws/${sessionId}`
-      : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/${sessionId}`
+    const url = getWebSocketUrl(sessionId)
     console.log(`[ARTA:WS] Connecting to ${url}`)
     ws = new WebSocket(url)
 
     ws.onopen = () => {
       connected.value = true
+      markBackendOnline()
       console.log(`[ARTA:WS] Connected (session=${sessionId})`)
     }
 
@@ -27,6 +26,7 @@ export function useWebSocket(sessionId: string | number) {
       connected.value = false
       console.log(`[ARTA:WS] Closed (code=${ev.code}, reason=${ev.reason}, intentional=${intentionalClose})`)
       if (!intentionalClose) {
+        markBackendOffline(`WebSocket closed (${ev.code})`)
         console.log('[ARTA:WS] Will reconnect in 3s...')
         reconnectTimer = setTimeout(connect, 3000)
       }
@@ -34,6 +34,7 @@ export function useWebSocket(sessionId: string | number) {
 
     ws.onerror = (ev) => {
       connected.value = false
+      markBackendOffline('WebSocket connection failed.')
       console.error('[ARTA:WS] Error:', ev)
     }
 
@@ -71,7 +72,9 @@ export function useWebSocket(sessionId: string | number) {
   function send(event: string, data?: Record<string, unknown>) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ event, data }))
+      return true
     }
+    return false
   }
 
   function disconnect() {

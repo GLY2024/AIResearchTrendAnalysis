@@ -17,6 +17,12 @@ export const useSessionStore = defineStore('session', () => {
     console.log('[ARTA:Session] Fetching sessions...')
     try {
       sessions.value = await sessionApi.list()
+      if (
+        currentSessionId.value === null ||
+        !sessions.value.some(s => s.id === currentSessionId.value)
+      ) {
+        currentSessionId.value = sessions.value[0]?.id ?? null
+      }
       console.log('[ARTA:Session] Loaded', sessions.value.length, 'sessions')
     } catch (err) {
       console.error('[ARTA:Session] Failed to fetch sessions:', err)

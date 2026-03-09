@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
+import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 
 const router = useRouter()
 const sessionStore = useSessionStore()
+const backendState = useBackendState()
 const hoveredSession = ref<number | null>(null)
 const confirmDeleteId = ref<number | null>(null)
+const actionError = ref('')
 
 const navLinks = [
   { label: 'Chat', path: '/chat', icon: '💬' },
@@ -18,24 +21,37 @@ const navLinks = [
 ]
 
 async function handleNewSession() {
-  const session = await sessionStore.createSession('New Session')
-  router.push('/chat')
+  actionError.value = ''
+  if (backendState.status !== 'online') {
+    actionError.value = getBackendOfflineMessage('creating a session')
+    return
+  }
+
+  try {
+    await sessionStore.createSession('New Session')
+    router.push('/chat')
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : 'Failed to create session.'
+    await checkBackend(true)
+  }
 }
 
 async function handleDeleteSession(id: number) {
+  actionError.value = ''
   if (confirmDeleteId.value === id) {
-    await sessionStore.deleteSession(id)
-    confirmDeleteId.value = null
+    try {
+      await sessionStore.deleteSession(id)
+      confirmDeleteId.value = null
+    } catch (err) {
+      actionError.value = err instanceof Error ? err.message : 'Failed to delete session.'
+      await checkBackend(true)
+    }
   } else {
     confirmDeleteId.value = id
     // Auto-reset after 3s
     setTimeout(() => { if (confirmDeleteId.value === id) confirmDeleteId.value = null }, 3000)
   }
 }
-
-onMounted(() => {
-  sessionStore.fetchSessions()
-})
 </script>
 
 <template>
@@ -55,11 +71,15 @@ onMounted(() => {
     <div class="px-3 py-3 shrink-0">
       <button
         class="glass-btn glass-btn-primary w-full flex items-center justify-center gap-2 text-sm"
+        :disabled="backendState.status !== 'online'"
         @click="handleNewSession"
       >
         <span class="text-lg leading-none">+</span>
         New Session
       </button>
+      <p v-if="actionError" class="mt-2 text-xs text-[var(--error)]">
+        {{ actionError }}
+      </p>
     </div>
 
     <!-- Session list -->
