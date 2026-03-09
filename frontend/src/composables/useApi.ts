@@ -11,6 +11,26 @@ const api = axios.create({
   timeout: 30000,
 })
 
+// Request/response logging interceptors
+api.interceptors.request.use((config) => {
+  console.log(`[ARTA:API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`, config.params || '')
+  return config
+})
+
+api.interceptors.response.use(
+  (response) => {
+    console.log(`[ARTA:API] ${response.status} ${response.config.url}`)
+    return response
+  },
+  (error) => {
+    const status = error.response?.status ?? 'NETWORK_ERROR'
+    const url = error.config?.url ?? '?'
+    const msg = error.response?.data?.detail ?? error.message
+    console.error(`[ARTA:API] ${status} ${url}: ${msg}`)
+    return Promise.reject(error)
+  }
+)
+
 // Sessions
 export const sessionApi = {
   list: () => api.get<Session[]>('/sessions').then(r => r.data),

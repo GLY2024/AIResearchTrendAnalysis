@@ -15,26 +15,32 @@ export function useWebSocket(sessionId: string | number) {
     const url = isTauri
       ? `ws://127.0.0.1:8721/ws/${sessionId}`
       : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/${sessionId}`
+    console.log(`[ARTA:WS] Connecting to ${url}`)
     ws = new WebSocket(url)
 
     ws.onopen = () => {
       connected.value = true
+      console.log(`[ARTA:WS] Connected (session=${sessionId})`)
     }
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       connected.value = false
+      console.log(`[ARTA:WS] Closed (code=${ev.code}, reason=${ev.reason}, intentional=${intentionalClose})`)
       if (!intentionalClose) {
+        console.log('[ARTA:WS] Will reconnect in 3s...')
         reconnectTimer = setTimeout(connect, 3000)
       }
     }
 
-    ws.onerror = () => {
+    ws.onerror = (ev) => {
       connected.value = false
+      console.error('[ARTA:WS] Error:', ev)
     }
 
     ws.onmessage = (event) => {
       try {
         const msg: WSEvent = JSON.parse(event.data)
+        console.log(`[ARTA:WS] Event: ${msg.event}`, msg.data)
         lastEvent.value = msg
         const eventHandlers = handlers.get(msg.event)
         if (eventHandlers) {
@@ -45,8 +51,8 @@ export function useWebSocket(sessionId: string | number) {
         if (wildcardHandlers) {
           wildcardHandlers.forEach(handler => handler({ event: msg.event, ...msg.data }))
         }
-      } catch {
-        // ignore parse errors
+      } catch (err) {
+        console.error('[ARTA:WS] Parse error:', err, event.data)
       }
     }
   }

@@ -92,7 +92,11 @@ function scrollToBottom() {
 }
 
 async function handleSend(content: string) {
-  if (!sessionStore.currentSession) return
+  console.log('[ARTA:Chat] handleSend called, session:', sessionStore.currentSession?.id, 'ws connected:', ws?.connected.value)
+  if (!sessionStore.currentSession) {
+    console.warn('[ARTA:Chat] No session selected, ignoring send')
+    return
+  }
 
   // Check if this is a plan generation command
   const planCmd = content.match(/^\/plan\s+(.+)/i)

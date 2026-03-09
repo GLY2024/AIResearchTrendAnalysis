@@ -14,21 +14,34 @@ export const useSessionStore = defineStore('session', () => {
 
   async function fetchSessions() {
     loading.value = true
+    console.log('[ARTA:Session] Fetching sessions...')
     try {
       sessions.value = await sessionApi.list()
+      console.log('[ARTA:Session] Loaded', sessions.value.length, 'sessions')
+    } catch (err) {
+      console.error('[ARTA:Session] Failed to fetch sessions:', err)
+      throw err
     } finally {
       loading.value = false
     }
   }
 
   async function createSession(title: string, description = '') {
-    const session = await sessionApi.create({ title, description })
-    sessions.value.unshift(session)
-    currentSessionId.value = session.id
-    return session
+    console.log('[ARTA:Session] Creating session:', title)
+    try {
+      const session = await sessionApi.create({ title, description })
+      sessions.value.unshift(session)
+      currentSessionId.value = session.id
+      console.log('[ARTA:Session] Created session:', session.id)
+      return session
+    } catch (err) {
+      console.error('[ARTA:Session] Failed to create session:', err)
+      throw err
+    }
   }
 
   async function deleteSession(id: number) {
+    console.log('[ARTA:Session] Deleting session:', id)
     await sessionApi.delete(id)
     sessions.value = sessions.value.filter(s => s.id !== id)
     if (currentSessionId.value === id) {
