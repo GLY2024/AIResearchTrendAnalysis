@@ -1,14 +1,36 @@
 """Analysis routes."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.common import AnalysisRequest, AnalysisResponse
-from app.db.engine import get_session
+from app.db.engine import async_session, get_session
 from app.db.models import AnalysisRun
+from app.core.task_manager import task_manager
+from app.agents.analyst import analyst_agent
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+
+async def _run_analysis(run_id: int):
+    """Background task: run analysis."""
+    async with async_session() as db:
+        run = await db.get(AnalysisRun, run_id)
+        if not run:
+            return
+        try:
+            await analyst_agent.run_analysis(db, run)
+            logger.info(f"Analysis {run_id} completed")
+        except Exception as e:
+            logger.error(f"Analysis {run_id} failed: {e}")
+            run.status = "failed"
+            run.results = {"error": str(e)}
+            await db.commit()
 
 
 @router.get("", response_model=list[AnalysisResponse])
@@ -32,7 +54,7 @@ async def create_analysis(body: AnalysisRequest, db: AsyncSession = Depends(get_
     db.add(run)
     await db.commit()
     await db.refresh(run)
-    # TODO: Trigger analysis via task_manager
+    task_manager.submit(_run_analysis(run.id), task_id=f"analysis-{run.id}")
     return AnalysisResponse.model_validate(run)
 
 

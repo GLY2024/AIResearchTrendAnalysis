@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import type { Report } from '@/types'
-import { reportApi } from '@/composables/useApi'
+import { reportApi, exportApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
 import GlassCard from '@/components/common/GlassCard.vue'
+import StreamingText from '@/components/chat/StreamingText.vue'
 
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart, LineChart, PieChart } from 'echarts/charts'
+import { BarChart, LineChart, PieChart, GraphChart } from 'echarts/charts'
 import {
   TitleComponent,
   TooltipComponent,
@@ -21,6 +22,7 @@ use([
   BarChart,
   LineChart,
   PieChart,
+  GraphChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
@@ -32,6 +34,7 @@ const reports = ref<Report[]>([])
 const selectedReport = ref<Report | null>(null)
 const loading = ref(false)
 const generating = ref(false)
+const showExportDialog = ref(false)
 
 async function loadReports() {
   if (!sessionStore.currentSession) return
@@ -46,17 +49,36 @@ async function loadReports() {
   }
 }
 
-async function generateReport() {
+async function generateReport(parentId?: number) {
   if (!sessionStore.currentSession) return
   generating.value = true
   try {
     const report = await reportApi.generate({
       session_id: sessionStore.currentSession.id,
+      parent_report_id: parentId,
     })
     reports.value.unshift(report)
     selectedReport.value = report
+    // Poll for completion
+    pollForCompletion(report.id)
   } finally {
     generating.value = false
+  }
+}
+
+async function pollForCompletion(reportId: number) {
+  const maxAttempts = 120  // 10 minutes max
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 5000))
+    try {
+      const updated = await reportApi.get(reportId)
+      const idx = reports.value.findIndex(r => r.id === reportId)
+      if (idx !== -1) reports.value[idx] = updated
+      if (selectedReport.value?.id === reportId) {
+        selectedReport.value = updated
+      }
+      if (updated.status === 'completed' || updated.status === 'failed') break
+    } catch { break }
   }
 }
 
@@ -68,10 +90,20 @@ function chartTheme(option: Record<string, unknown>) {
   return { backgroundColor: 'transparent', textStyle: { color: '#94a3b8' }, ...option }
 }
 
+function downloadExport(format: 'ris' | 'bibtex') {
+  if (!sessionStore.currentSession) return
+  const url = format === 'ris'
+    ? exportApi.risUrl(sessionStore.currentSession.id)
+    : exportApi.bibtexUrl(sessionStore.currentSession.id)
+  window.open(url, '_blank')
+  showExportDialog.value = false
+}
+
 const statusBadge: Record<string, string> = {
   draft: 'badge-warning',
   generating: 'badge-info',
   completed: 'badge-success',
+  failed: 'badge-error',
 }
 
 watch(() => sessionStore.currentSessionId, () => {
@@ -87,17 +119,26 @@ onMounted(loadReports)
       <div>
         <h1 class="text-xl font-semibold text-[var(--text-primary)]">Report</h1>
         <p class="text-sm text-[var(--text-secondary)]">
-          Generate and view research reports.
+          Generate and view research trend reports.
         </p>
       </div>
-      <button
-        class="glass-btn glass-btn-primary"
-        :disabled="generating || !sessionStore.currentSession"
-        @click="generateReport"
-      >
-        <span v-if="generating" class="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin mr-2" />
-        Generate Report
-      </button>
+      <div class="flex gap-2">
+        <button
+          class="glass-btn"
+          :disabled="!sessionStore.currentSession"
+          @click="showExportDialog = true"
+        >
+          Export
+        </button>
+        <button
+          class="glass-btn glass-btn-primary"
+          :disabled="generating || !sessionStore.currentSession"
+          @click="generateReport()"
+        >
+          <span v-if="generating" class="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin mr-2" />
+          Generate Report
+        </button>
+      </div>
     </div>
 
     <div v-if="!sessionStore.currentSession" class="text-[var(--text-muted)]">
@@ -117,8 +158,8 @@ onMounted(loadReports)
           <div
             v-for="report in reports"
             :key="report.id"
-            class="glass-card p-3 cursor-pointer"
-            :class="selectedReport?.id === report.id ? 'border-[var(--accent-primary)]' : ''"
+            class="glass-card p-3 cursor-pointer transition-all"
+            :class="selectedReport?.id === report.id ? 'border border-[var(--accent-primary)]/50' : ''"
             @click="selectReport(report)"
           >
             <div class="text-sm font-medium text-[var(--text-primary)] truncate">
@@ -129,42 +170,115 @@ onMounted(loadReports)
                 {{ report.status }}
               </span>
               <span class="text-[10px] text-[var(--text-muted)]">
-                {{ new Date(report.created_at).toLocaleDateString() }}
+                v{{ report.version }}
               </span>
+            </div>
+            <div class="text-[10px] text-[var(--text-muted)] mt-1">
+              {{ new Date(report.created_at).toLocaleDateString() }}
             </div>
           </div>
         </div>
 
         <!-- Report content -->
         <GlassCard v-if="selectedReport" class="flex-1 min-w-0">
-          <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-4">
-            {{ selectedReport.title || `Report v${selectedReport.version}` }}
-          </h2>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold text-[var(--text-primary)]">
+              {{ selectedReport.title || `Report v${selectedReport.version}` }}
+            </h2>
+            <button
+              v-if="selectedReport.status === 'completed'"
+              class="glass-btn text-xs"
+              :disabled="generating"
+              @click="generateReport(selectedReport.id)"
+            >
+              Update Report
+            </button>
+          </div>
+
+          <!-- Generating state -->
+          <div v-if="selectedReport.status === 'generating'" class="flex items-center gap-3 text-[var(--text-secondary)]">
+            <span class="inline-block w-4 h-4 rounded-full border-2 border-white/20 border-t-[var(--accent-primary)] animate-spin" />
+            Generating report... This may take a minute.
+          </div>
+
+          <!-- Failed state -->
+          <div v-else-if="selectedReport.status === 'failed'" class="text-[var(--error)]">
+            {{ selectedReport.content_markdown || 'Report generation failed.' }}
+          </div>
 
           <!-- Markdown content -->
-          <div
-            class="prose prose-invert prose-sm max-w-none text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed"
-          >
-            {{ selectedReport.content_markdown }}
-          </div>
-
-          <!-- Embedded charts -->
-          <div
-            v-for="(chartGroup, gi) in selectedReport.chart_configs"
-            :key="gi"
-            class="grid grid-cols-1 lg:grid-cols-2 gap-4 my-4"
-          >
-            <div v-for="chart in chartGroup" :key="chart.id" class="glass-card p-4">
-              <h4 class="text-sm font-medium text-[var(--text-primary)] mb-2">{{ chart.title }}</h4>
-              <VChart
-                :option="chartTheme(chart.option)"
-                class="w-full h-64"
-                autoresize
+          <template v-else>
+            <div class="report-content">
+              <StreamingText
+                :text="selectedReport.content_markdown || ''"
+                :is-streaming="false"
               />
             </div>
-          </div>
+
+            <!-- Embedded charts -->
+            <template v-for="(chartGroup, gi) in selectedReport.chart_configs" :key="gi">
+              <div
+                v-if="Array.isArray(chartGroup) && chartGroup.length"
+                class="grid grid-cols-1 lg:grid-cols-2 gap-4 my-4"
+              >
+                <div v-for="chart in chartGroup" :key="chart.id" class="glass-card p-4">
+                  <h4 class="text-sm font-medium text-[var(--text-primary)] mb-2">{{ chart.title }}</h4>
+                  <VChart
+                    :option="chartTheme(chart.option)"
+                    class="w-full h-64"
+                    autoresize
+                  />
+                </div>
+              </div>
+            </template>
+          </template>
         </GlassCard>
       </div>
     </template>
+
+    <!-- Export Dialog -->
+    <Teleport to="body">
+      <div v-if="showExportDialog" class="fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showExportDialog = false" />
+        <div class="glass-card p-6 relative z-10 w-80">
+          <h3 class="text-lg font-semibold text-[var(--text-primary)] mb-4">Export Papers</h3>
+          <div class="space-y-3">
+            <button class="glass-btn w-full justify-center" @click="downloadExport('ris')">
+              Export as RIS
+            </button>
+            <button class="glass-btn w-full justify-center" @click="downloadExport('bibtex')">
+              Export as BibTeX
+            </button>
+          </div>
+          <button
+            class="mt-4 text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+            @click="showExportDialog = false"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
+
+<style scoped>
+.report-content :deep(h1),
+.report-content :deep(h2),
+.report-content :deep(h3) {
+  color: var(--text-primary);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.report-content :deep(h1) { font-size: 1.25rem; font-weight: 700; }
+.report-content :deep(h2) { font-size: 1.1rem; font-weight: 600; }
+.report-content :deep(h3) { font-size: 1rem; font-weight: 600; }
+.report-content :deep(ul),
+.report-content :deep(ol) {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.report-content :deep(li) {
+  margin: 0.25em 0;
+}
+</style>

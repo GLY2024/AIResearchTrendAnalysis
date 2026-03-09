@@ -70,7 +70,7 @@ export const settingsApi = {
   list: () => api.get<AppSetting[]>('/settings').then(r => r.data),
   update: (data: { key: string; value: string; is_sensitive?: boolean }) =>
     api.put('/settings', data).then(r => r.data),
-  delete: (key: string) => api.delete(`/settings/${key}`),
+  delete: (key: string) => api.delete('/settings', { params: { key } }),
 }
 
 // Export

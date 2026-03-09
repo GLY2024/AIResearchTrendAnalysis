@@ -11,6 +11,7 @@ from app.db.engine import init_db
 from app.sources.registry import source_registry
 from app.sources.openalex_source import OpenAlexSource
 from app.sources.arxiv_source import ArxivSource
+from app.sources.scopus_source import ScopusSource
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -26,9 +27,16 @@ async def lifespan(app: FastAPI):
     logger.info("ARTA backend starting...")
     await init_db()
 
+    # Load API keys and model settings from DB
+    from app.services.ai_service import ai_service
+    await ai_service.load_settings_from_db()
+
     # Register data sources
     source_registry.register(OpenAlexSource())
     source_registry.register(ArxivSource())
+    scopus = ScopusSource()
+    if await scopus.is_available():
+        source_registry.register(scopus)
 
     source_status = await source_registry.status()
     logger.info(f"Data sources: {source_status}")
@@ -67,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(analysis.router, prefix="/api")
     app.include_router(reports.router, prefix="/api")
     app.include_router(settings_routes.router, prefix="/api")
+    app.include_router(settings_routes.validate_router, prefix="/api")
     app.include_router(export.router, prefix="/api")
     app.include_router(ws_router)
 

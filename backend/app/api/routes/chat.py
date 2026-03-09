@@ -50,8 +50,15 @@ async def send_message(body: ChatMessageRequest, db: AsyncSession = Depends(get_
         for m in result.scalars().all()
     ]
 
+    # Add system prompt
+    from app.services.ai_service import CHAT_SYSTEM_PROMPT
+    messages_with_system = [
+        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        *history,
+    ]
+
     # Get AI response
-    ai_response = await ai_service.chat(history, role="chat")
+    ai_response = await ai_service.chat(messages_with_system, role="chat")
 
     # Save assistant message
     assistant_msg = ChatMessage(

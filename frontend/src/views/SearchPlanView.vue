@@ -1,14 +1,77 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, onUnmounted, computed } from 'vue'
 import type { SearchPlan } from '@/types'
 import { searchApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
+import { useWebSocket } from '@/composables/useWebSocket'
 import GlassCard from '@/components/common/GlassCard.vue'
 
 const sessionStore = useSessionStore()
 const plans = ref<SearchPlan[]>([])
 const loading = ref(false)
 const expandedId = ref<number | null>(null)
+
+// Search progress tracking
+interface SearchProgress {
+  plan_id: number
+  query_index: number
+  total_queries: number
+  source: string
+  query: string
+  status: string
+  results_count?: number
+  total_found?: number
+}
+
+const activeProgress = ref<Map<number, SearchProgress>>(new Map())
+const completedSearches = ref<Map<number, { total_papers: number }>>(new Map())
+
+// WebSocket connection
+let ws: ReturnType<typeof useWebSocket> | null = null
+
+function setupWebSocket() {
+  if (ws) ws.disconnect()
+  if (!sessionStore.currentSession) return
+
+  ws = useWebSocket(sessionStore.currentSession.id)
+
+  ws.on('search_progress', (data: Record<string, unknown>) => {
+    const progress = data as unknown as SearchProgress
+    activeProgress.value.set(progress.plan_id, progress)
+    // Update plan status in the list
+    const plan = plans.value.find(p => p.id === progress.plan_id)
+    if (plan && plan.status === 'approved') {
+      plan.status = 'executing'
+    }
+  })
+
+  ws.on('search_complete', (data: Record<string, unknown>) => {
+    const planId = data.plan_id as number
+    completedSearches.value.set(planId, { total_papers: data.total_papers as number })
+    activeProgress.value.delete(planId)
+    // Update plan status
+    const plan = plans.value.find(p => p.id === planId)
+    if (plan) {
+      plan.status = 'completed'
+    }
+  })
+
+  ws.on('search_plan_approved', (data: Record<string, unknown>) => {
+    const plan = plans.value.find(p => p.id === (data.plan_id as number))
+    if (plan) {
+      plan.status = 'approved'
+    }
+  })
+
+  ws.on('error', (data: Record<string, unknown>) => {
+    const planId = data.plan_id as number | undefined
+    if (planId) {
+      activeProgress.value.delete(planId)
+      const plan = plans.value.find(p => p.id === planId)
+      if (plan) plan.status = 'failed'
+    }
+  })
+}
 
 async function loadPlans() {
   if (!sessionStore.currentSession) return
@@ -18,6 +81,7 @@ async function loadPlans() {
   } finally {
     loading.value = false
   }
+  setupWebSocket()
 }
 
 async function handleAction(planId: number, action: 'approve' | 'reject') {
@@ -28,6 +92,12 @@ async function handleAction(planId: number, action: 'approve' | 'reject') {
 
 function toggle(id: number) {
   expandedId.value = expandedId.value === id ? null : id
+}
+
+function getProgressPercent(planId: number): number {
+  const p = activeProgress.value.get(planId)
+  if (!p) return 0
+  return Math.round(((p.query_index + (p.status === 'completed' ? 1 : 0.5)) / p.total_queries) * 100)
 }
 
 const statusBadge: Record<string, string> = {
@@ -41,6 +111,9 @@ const statusBadge: Record<string, string> = {
 
 watch(() => sessionStore.currentSessionId, loadPlans)
 onMounted(loadPlans)
+onUnmounted(() => {
+  if (ws) ws.disconnect()
+})
 </script>
 
 <template>
@@ -80,19 +153,65 @@ onMounted(loadPlans)
           </span>
         </div>
 
+        <!-- Search progress bar -->
+        <div
+          v-if="activeProgress.has(plan.id)"
+          class="mt-3 space-y-2"
+        >
+          <div class="flex items-center justify-between text-xs text-[var(--text-secondary)]">
+            <span>
+              Searching: {{ activeProgress.get(plan.id)!.source }} -
+              "{{ activeProgress.get(plan.id)!.query.substring(0, 50) }}"
+            </span>
+            <span>
+              {{ activeProgress.get(plan.id)!.query_index + 1 }} / {{ activeProgress.get(plan.id)!.total_queries }}
+            </span>
+          </div>
+          <div class="w-full h-2 rounded-full bg-white/5 overflow-hidden">
+            <div
+              class="h-full rounded-full transition-all duration-500"
+              style="background: var(--accent-primary)"
+              :style="{ width: getProgressPercent(plan.id) + '%' }"
+            />
+          </div>
+          <div class="text-xs text-[var(--text-muted)]">
+            {{ activeProgress.get(plan.id)!.total_found ?? 0 }} papers found so far
+          </div>
+        </div>
+
+        <!-- Completed search summary -->
+        <div
+          v-if="completedSearches.has(plan.id)"
+          class="mt-3 text-sm text-[var(--accent-secondary)]"
+        >
+          Search complete: {{ completedSearches.get(plan.id)!.total_papers }} papers found
+        </div>
+
         <!-- Expanded detail -->
         <div v-if="expandedId === plan.id" class="mt-4 space-y-3 text-sm">
           <p class="text-[var(--text-secondary)]">{{ plan.plan_data.description }}</p>
 
           <!-- Year range -->
-          <div v-if="plan.plan_data.year_range.from || plan.plan_data.year_range.to">
+          <div v-if="plan.plan_data.year_range?.from || plan.plan_data.year_range?.to">
             <span class="text-[var(--text-muted)]">Year range:</span>
-            {{ plan.plan_data.year_range.from ?? '...' }} - {{ plan.plan_data.year_range.to ?? '...' }}
+            {{ plan.plan_data.year_range.from ?? '...' }} - {{ plan.plan_data.year_range.to ?? 'present' }}
+          </div>
+
+          <!-- Max results -->
+          <div v-if="plan.plan_data.max_results_per_query">
+            <span class="text-[var(--text-muted)]">Max results per query:</span>
+            {{ plan.plan_data.max_results_per_query }}
+          </div>
+
+          <!-- Snowball config -->
+          <div v-if="plan.plan_data.snowball_config?.enabled" class="text-xs text-[var(--text-muted)]">
+            Snowball: {{ plan.plan_data.snowball_config.directions?.join(', ') ?? 'forward, backward' }}
+            ({{ plan.plan_data.snowball_config.max_hops ?? 2 }} hops, min citations: {{ plan.plan_data.snowball_config.min_citation_threshold ?? 5 }})
           </div>
 
           <!-- Queries -->
           <div>
-            <h4 class="text-[var(--text-muted)] mb-2">Queries ({{ plan.plan_data.queries.length }})</h4>
+            <h4 class="text-[var(--text-muted)] mb-2">Queries ({{ plan.plan_data.queries?.length ?? 0 }})</h4>
             <div
               v-for="(q, i) in plan.plan_data.queries"
               :key="i"
@@ -105,13 +224,18 @@ onMounted(loadPlans)
           </div>
 
           <!-- Inclusion / Exclusion -->
-          <div v-if="plan.plan_data.inclusion_criteria.length" class="text-[var(--text-secondary)]">
+          <div v-if="plan.plan_data.inclusion_criteria?.length" class="text-[var(--text-secondary)]">
             <span class="text-[var(--text-muted)]">Include:</span>
             {{ plan.plan_data.inclusion_criteria.join('; ') }}
           </div>
-          <div v-if="plan.plan_data.exclusion_criteria.length" class="text-[var(--text-secondary)]">
+          <div v-if="plan.plan_data.exclusion_criteria?.length" class="text-[var(--text-secondary)]">
             <span class="text-[var(--text-muted)]">Exclude:</span>
             {{ plan.plan_data.exclusion_criteria.join('; ') }}
+          </div>
+
+          <!-- Notes -->
+          <div v-if="plan.plan_data.notes" class="text-[var(--text-muted)] text-xs italic">
+            {{ plan.plan_data.notes }}
           </div>
 
           <!-- Actions -->
@@ -120,7 +244,7 @@ onMounted(loadPlans)
               class="glass-btn glass-btn-primary"
               @click.stop="handleAction(plan.id, 'approve')"
             >
-              Approve
+              Approve & Execute
             </button>
             <button
               class="glass-btn"

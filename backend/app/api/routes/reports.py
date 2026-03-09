@@ -1,14 +1,36 @@
 """Report routes."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.common import ReportGenerateRequest, ReportResponse
-from app.db.engine import get_session
+from app.db.engine import async_session, get_session
 from app.db.models import Report
+from app.core.task_manager import task_manager
+from app.agents.publisher import publisher_agent
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+async def _generate_report(report_id: int):
+    """Background task: generate report."""
+    async with async_session() as db:
+        report = await db.get(Report, report_id)
+        if not report:
+            return
+        try:
+            await publisher_agent.generate_report(db, report)
+            logger.info(f"Report {report_id} completed")
+        except Exception as e:
+            logger.error(f"Report {report_id} failed: {e}")
+            report.status = "failed"
+            report.content_markdown = f"Report generation failed: {e}"
+            await db.commit()
 
 
 @router.get("", response_model=list[ReportResponse])
@@ -39,7 +61,7 @@ async def generate_report(body: ReportGenerateRequest, db: AsyncSession = Depend
     db.add(report)
     await db.commit()
     await db.refresh(report)
-    # TODO: Trigger publisher agent via task_manager
+    task_manager.submit(_generate_report(report.id), task_id=f"report-{report.id}")
     return ReportResponse.model_validate(report)
 
 

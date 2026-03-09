@@ -37,9 +37,11 @@ const loading = ref(false)
 const running = ref<string | null>(null)
 
 const analysisTypes = [
-  { key: 'bibliometrics', label: 'Bibliometrics', description: 'Publication trends, top authors, journals' },
-  { key: 'trend', label: 'Trend Analysis', description: 'Research topic trends over time' },
-  { key: 'network', label: 'Network Analysis', description: 'Co-authorship and citation networks' },
+  { key: 'bibliometrics', label: 'Bibliometrics', description: 'H-index, citations, top authors, journals' },
+  { key: 'trend', label: 'Trend Analysis', description: 'Publication & citation trends over time' },
+  { key: 'network', label: 'Keyword Network', description: 'Keyword co-occurrence network' },
+  { key: 'coauthor', label: 'Co-authorship', description: 'Author collaboration network' },
+  { key: 'topic_modeling', label: 'Topic Modeling', description: 'Discover research themes' },
 ] as const
 
 async function loadRuns() {
@@ -61,8 +63,23 @@ async function runAnalysis(type: string) {
       analysis_type: type,
     })
     runs.value.unshift(result)
+    // Poll for completion since it runs as background task
+    pollForCompletion(result.id)
   } finally {
     running.value = null
+  }
+}
+
+async function pollForCompletion(runId: number) {
+  const maxAttempts = 60  // 5 minutes max
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 5000))
+    try {
+      const updated = await analysisApi.get(runId)
+      const idx = runs.value.findIndex(r => r.id === runId)
+      if (idx !== -1) runs.value[idx] = updated
+      if (updated.status === 'completed' || updated.status === 'failed') break
+    } catch { break }
   }
 }
 

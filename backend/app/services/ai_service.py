@@ -1,6 +1,7 @@
 """AI service with LiteLLM - role-based model routing."""
 
 import logging
+import os
 from typing import AsyncGenerator
 
 import litellm
@@ -12,6 +13,22 @@ logger = logging.getLogger(__name__)
 
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
+
+# Chat system prompt
+CHAT_SYSTEM_PROMPT = """You are ARTA (AI Research Trend Analysis), an AI research assistant that helps users explore and analyze academic research trends.
+
+Your capabilities:
+1. **Topic Clarification**: Help users refine and define their research topics through conversation
+2. **Search Planning**: When the user is ready, suggest generating a search plan (they can trigger this via the UI)
+3. **Research Guidance**: Provide context about research fields, suggest related topics, identify key concepts
+
+Guidelines:
+- Be concise and focused on research assistance
+- Ask clarifying questions to understand the user's research interests
+- When the topic is sufficiently defined, suggest the user generate a search plan
+- Provide academic context and domain knowledge
+- Use markdown formatting for readability
+- Reference relevant concepts, methods, and subfields"""
 
 
 class AIService:
@@ -25,9 +42,49 @@ class AIService:
         "executor": "ai_executor_model",
     }
 
+    # DB setting keys that override config defaults
+    _MODEL_SETTING_KEYS = {
+        "model_chat": "ai_chat_model",
+        "model_planner": "ai_planner_model",
+        "model_analyst": "ai_analyst_model",
+        "model_publisher": "ai_publisher_model",
+        "model_executor": "ai_executor_model",
+    }
+
+    def __init__(self):
+        self._model_overrides: dict[str, str] = {}
+
+    async def load_settings_from_db(self):
+        """Load API keys and model overrides from the database."""
+        from app.db.engine import async_session
+        from app.db.models import AppSetting
+        from sqlalchemy import select
+
+        try:
+            async with async_session() as db:
+                result = await db.execute(select(AppSetting))
+                for s in result.scalars().all():
+                    # API keys → environment variables
+                    env_map = {
+                        "openai_api_key": "OPENAI_API_KEY",
+                        "anthropic_api_key": "ANTHROPIC_API_KEY",
+                        "google_api_key": "GEMINI_API_KEY",
+                        "scopus_api_key": "SCOPUS_API_KEY",
+                    }
+                    if s.key in env_map and s.value:
+                        os.environ[env_map[s.key]] = s.value
+                    # Model overrides
+                    if s.key in self._MODEL_SETTING_KEYS and s.value:
+                        attr = self._MODEL_SETTING_KEYS[s.key]
+                        self._model_overrides[attr] = s.value
+                        logger.info(f"Model override: {attr} = {s.value}")
+        except Exception as e:
+            logger.warning(f"Failed to load settings from DB: {e}")
+
     def _get_model(self, role: str) -> str:
         attr = self.ROLE_MODEL_MAP.get(role, "ai_chat_model")
-        return getattr(settings, attr)
+        # Check DB overrides first, then config
+        return self._model_overrides.get(attr, getattr(settings, attr))
 
     async def chat(
         self,

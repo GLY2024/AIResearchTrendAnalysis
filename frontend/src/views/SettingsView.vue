@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { settingsApi } from '@/composables/useApi'
 import GlassCard from '@/components/common/GlassCard.vue'
+import axios from 'axios'
 
 interface SettingField {
   key: string
@@ -9,25 +10,30 @@ interface SettingField {
   value: string
   saved: boolean
   saving: boolean
+  validating: boolean
+  validationResult: { valid: boolean; message: string } | null
 }
 
 // API keys
 const apiKeys = ref<SettingField[]>([
-  { key: 'openai_api_key', label: 'OpenAI API Key', value: '', saved: false, saving: false },
-  { key: 'anthropic_api_key', label: 'Anthropic API Key', value: '', saved: false, saving: false },
-  { key: 'google_api_key', label: 'Google API Key', value: '', saved: false, saving: false },
-  { key: 'scopus_api_key', label: 'Scopus API Key', value: '', saved: false, saving: false },
-  { key: 'zotero_api_key', label: 'Zotero API Key', value: '', saved: false, saving: false },
+  { key: 'openai_api_key', label: 'OpenAI API Key', value: '', saved: false, saving: false, validating: false, validationResult: null },
+  { key: 'anthropic_api_key', label: 'Anthropic API Key', value: '', saved: false, saving: false, validating: false, validationResult: null },
+  { key: 'google_api_key', label: 'Google API Key', value: '', saved: false, saving: false, validating: false, validationResult: null },
+  { key: 'scopus_api_key', label: 'Scopus API Key', value: '', saved: false, saving: false, validating: false, validationResult: null },
+  { key: 'zotero_api_key', label: 'Zotero API Key', value: '', saved: false, saving: false, validating: false, validationResult: null },
 ])
 
 // Model role mapping
 const modelRoles = ref<SettingField[]>([
-  { key: 'model_chat', label: 'Chat Model', value: '', saved: false, saving: false },
-  { key: 'model_planner', label: 'Planner Model', value: '', saved: false, saving: false },
-  { key: 'model_analyst', label: 'Analyst Model', value: '', saved: false, saving: false },
-  { key: 'model_publisher', label: 'Publisher Model', value: '', saved: false, saving: false },
-  { key: 'model_executor', label: 'Executor Model', value: '', saved: false, saving: false },
+  { key: 'model_chat', label: 'Chat Model', value: '', saved: false, saving: false, validating: false, validationResult: null },
+  { key: 'model_planner', label: 'Planner Model', value: '', saved: false, saving: false, validating: false, validationResult: null },
+  { key: 'model_analyst', label: 'Analyst Model', value: '', saved: false, saving: false, validating: false, validationResult: null },
+  { key: 'model_publisher', label: 'Publisher Model', value: '', saved: false, saving: false, validating: false, validationResult: null },
+  { key: 'model_executor', label: 'Executor Model', value: '', saved: false, saving: false, validating: false, validationResult: null },
 ])
+
+// Keys that support validation
+const validatableKeys = new Set(['openai_api_key', 'anthropic_api_key', 'google_api_key'])
 
 async function loadSettings() {
   try {
@@ -52,8 +58,26 @@ async function saveSetting(field: SettingField, isSensitive = false) {
       is_sensitive: isSensitive,
     })
     field.saved = true
+    field.validationResult = null
   } finally {
     field.saving = false
+  }
+}
+
+async function validateKey(field: SettingField) {
+  if (!field.value || field.value.includes('***')) return
+  field.validating = true
+  field.validationResult = null
+  try {
+    const resp = await axios.post('/api/validate-key', {
+      key: field.key,
+      value: field.value,
+    })
+    field.validationResult = resp.data
+  } catch (e: unknown) {
+    field.validationResult = { valid: false, message: 'Validation request failed' }
+  } finally {
+    field.validating = false
   }
 }
 
@@ -78,7 +102,7 @@ onMounted(loadSettings)
               type="password"
               class="glass-input flex-1"
               :placeholder="field.saved ? '••••••••' : 'Enter key...'"
-              @input="field.saved = false"
+              @input="field.saved = false; field.validationResult = null"
             />
             <button
               class="glass-btn glass-btn-primary shrink-0"
@@ -87,6 +111,22 @@ onMounted(loadSettings)
             >
               {{ field.saving ? '...' : 'Save' }}
             </button>
+            <button
+              v-if="validatableKeys.has(field.key)"
+              class="glass-btn shrink-0"
+              :disabled="field.validating || !field.value || field.value.includes('***')"
+              @click="validateKey(field)"
+            >
+              {{ field.validating ? '...' : 'Test' }}
+            </button>
+          </div>
+          <!-- Validation result -->
+          <div
+            v-if="field.validationResult"
+            class="mt-1 text-xs"
+            :class="field.validationResult.valid ? 'text-[var(--success)]' : 'text-[var(--error)]'"
+          >
+            {{ field.validationResult.valid ? '✓' : '✗' }} {{ field.validationResult.message }}
           </div>
         </div>
       </div>
@@ -95,7 +135,7 @@ onMounted(loadSettings)
     <!-- Model Roles -->
     <GlassCard title="Model Role Mapping">
       <p class="text-xs text-[var(--text-muted)] mb-4">
-        Assign which model handles each role (e.g. gpt-4o, claude-sonnet-4-20250514, gemini-pro).
+        Assign which model handles each role. Examples: gpt-4o, claude-sonnet-4-20250514, gemini/gemini-2.0-flash
       </p>
       <div class="space-y-4">
         <div v-for="field in modelRoles" :key="field.key">

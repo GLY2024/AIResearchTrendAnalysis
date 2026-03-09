@@ -5,6 +5,10 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analysis.bibliometrics import run_bibliometrics
+from app.analysis.charts import theme_all_charts
+from app.analysis.network import run_coauthor_network, run_keyword_network
+from app.analysis.trend_detection import run_trend_analysis
 from app.core.events import event_bus
 from app.db.models import AnalysisRun, Paper
 from app.services.ai_service import ai_service
@@ -21,6 +25,7 @@ class AnalystAgent:
         analysis_run: AnalysisRun,
     ):
         """Execute an analysis run."""
+        logger.info(f"Starting analysis {analysis_run.id}: {analysis_run.analysis_type}")
         analysis_run.status = "running"
         await db.commit()
 
@@ -36,6 +41,7 @@ class AnalystAgent:
             analysis_run.status = "failed"
             analysis_run.results = {"error": "No papers to analyze"}
             await db.commit()
+            logger.warning(f"Analysis {analysis_run.id}: no papers")
             return
 
         analysis_type = analysis_run.analysis_type
@@ -48,13 +54,22 @@ class AnalystAgent:
 
         # Compute metrics based on type
         if analysis_type == "bibliometrics":
-            results, charts = self._bibliometrics(papers)
+            results, charts = run_bibliometrics(papers)
         elif analysis_type == "trend":
-            results, charts = self._trend_analysis(papers)
+            results, charts = run_trend_analysis(papers)
         elif analysis_type == "network":
-            results, charts = self._network_analysis(papers)
+            results, charts = run_keyword_network(papers)
+        elif analysis_type == "coauthor":
+            results, charts = run_coauthor_network(papers)
+        elif analysis_type == "topic_modeling":
+            from app.analysis.topic_modeling import run_topic_modeling
+            results, charts = await run_topic_modeling(papers)
         else:
-            results, charts = self._bibliometrics(papers)
+            logger.warning(f"Unknown analysis type: {analysis_type}, falling back to bibliometrics")
+            results, charts = run_bibliometrics(papers)
+
+        # Apply chart theming
+        charts = theme_all_charts(charts)
 
         await event_bus.emit("analysis_progress", {
             "run_id": analysis_run.id,
@@ -71,183 +86,34 @@ class AnalystAgent:
         analysis_run.status = "completed"
         await db.commit()
 
+        logger.info(f"Analysis {analysis_run.id} completed")
+
         await event_bus.emit("analysis_progress", {
             "run_id": analysis_run.id,
             "step": "completed",
             "progress": 1.0,
         })
 
-    def _bibliometrics(self, papers) -> tuple[dict, list]:
-        """Basic bibliometric analysis."""
-        total = len(papers)
-        years = [p.year for p in papers if p.year]
-        citations = [p.citation_count for p in papers]
-
-        # Year distribution
-        year_dist = {}
-        for y in years:
-            year_dist[y] = year_dist.get(y, 0) + 1
-
-        # Top cited
-        sorted_papers = sorted(papers, key=lambda p: p.citation_count, reverse=True)
-        top_cited = [
-            {"title": p.title[:100], "citations": p.citation_count, "year": p.year}
-            for p in sorted_papers[:20]
-        ]
-
-        # Author frequency
-        author_freq = {}
-        for p in papers:
-            for a in (p.authors or []):
-                name = a.get("name", "")
-                if name:
-                    author_freq[name] = author_freq.get(name, 0) + 1
-        top_authors = sorted(author_freq.items(), key=lambda x: x[1], reverse=True)[:20]
-
-        # Journal frequency
-        journal_freq = {}
-        for p in papers:
-            if p.journal:
-                journal_freq[p.journal] = journal_freq.get(p.journal, 0) + 1
-        top_journals = sorted(journal_freq.items(), key=lambda x: x[1], reverse=True)[:15]
-
-        results = {
-            "total_papers": total,
-            "year_range": [min(years) if years else 0, max(years) if years else 0],
-            "total_citations": sum(citations),
-            "avg_citations": round(sum(citations) / total, 2) if total else 0,
-            "top_cited": top_cited,
-            "top_authors": [{"name": n, "count": c} for n, c in top_authors],
-            "top_journals": [{"name": n, "count": c} for n, c in top_journals],
-            "year_distribution": year_dist,
-        }
-
-        # ECharts configs
-        charts = [
-            {
-                "id": "year_trend",
-                "title": "Publication Trend by Year",
-                "type": "bar",
-                "option": {
-                    "xAxis": {"type": "category", "data": sorted(year_dist.keys())},
-                    "yAxis": {"type": "value", "name": "Papers"},
-                    "series": [{"type": "bar", "data": [year_dist[y] for y in sorted(year_dist.keys())]}],
-                    "tooltip": {"trigger": "axis"},
-                },
-            },
-            {
-                "id": "top_authors",
-                "title": "Top Authors by Publication Count",
-                "type": "bar",
-                "option": {
-                    "xAxis": {"type": "value"},
-                    "yAxis": {"type": "category", "data": [n for n, _ in top_authors[:10]]},
-                    "series": [{"type": "bar", "data": [c for _, c in top_authors[:10]]}],
-                    "tooltip": {"trigger": "axis"},
-                },
-            },
-        ]
-
-        return results, charts
-
-    def _trend_analysis(self, papers) -> tuple[dict, list]:
-        """Citation trend and growth analysis."""
-        year_data = {}
-        for p in papers:
-            y = p.year
-            if not y:
-                continue
-            if y not in year_data:
-                year_data[y] = {"count": 0, "citations": 0}
-            year_data[y]["count"] += 1
-            year_data[y]["citations"] += p.citation_count
-
-        sorted_years = sorted(year_data.keys())
-        results = {
-            "yearly_data": {str(y): year_data[y] for y in sorted_years},
-        }
-
-        charts = [
-            {
-                "id": "citation_trend",
-                "title": "Citation Trend Over Time",
-                "type": "line",
-                "option": {
-                    "xAxis": {"type": "category", "data": [str(y) for y in sorted_years]},
-                    "yAxis": [
-                        {"type": "value", "name": "Papers"},
-                        {"type": "value", "name": "Citations"},
-                    ],
-                    "series": [
-                        {"type": "bar", "data": [year_data[y]["count"] for y in sorted_years], "name": "Papers"},
-                        {"type": "line", "yAxisIndex": 1, "data": [year_data[y]["citations"] for y in sorted_years], "name": "Citations"},
-                    ],
-                    "tooltip": {"trigger": "axis"},
-                    "legend": {},
-                },
-            }
-        ]
-
-        return results, charts
-
-    def _network_analysis(self, papers) -> tuple[dict, list]:
-        """Keyword co-occurrence network."""
-        keyword_freq = {}
-        co_occur = {}
-        for p in papers:
-            kws = (p.keywords or [])[:10]
-            for kw in kws:
-                keyword_freq[kw] = keyword_freq.get(kw, 0) + 1
-            for i, kw1 in enumerate(kws):
-                for kw2 in kws[i + 1:]:
-                    pair = tuple(sorted([kw1, kw2]))
-                    co_occur[pair] = co_occur.get(pair, 0) + 1
-
-        # Top keywords as nodes
-        top_kws = sorted(keyword_freq.items(), key=lambda x: x[1], reverse=True)[:30]
-        top_kw_set = {kw for kw, _ in top_kws}
-
-        nodes = [{"name": kw, "value": cnt, "symbolSize": min(cnt * 3, 50)} for kw, cnt in top_kws]
-        links = [
-            {"source": pair[0], "target": pair[1], "value": cnt}
-            for pair, cnt in co_occur.items()
-            if pair[0] in top_kw_set and pair[1] in top_kw_set and cnt >= 2
-        ]
-
-        results = {"keyword_freq": dict(top_kws), "co_occurrences": len(links)}
-
-        charts = [
-            {
-                "id": "keyword_network",
-                "title": "Keyword Co-occurrence Network",
-                "type": "graph",
-                "option": {
-                    "series": [{
-                        "type": "graph",
-                        "layout": "force",
-                        "data": nodes,
-                        "links": links,
-                        "force": {"repulsion": 200, "edgeLength": [50, 200]},
-                        "label": {"show": True, "fontSize": 10},
-                        "lineStyle": {"curveness": 0.3},
-                    }],
-                    "tooltip": {},
-                },
-            }
-        ]
-
-        return results, charts
-
     async def _interpret(self, analysis_type: str, results: dict, papers) -> str:
         """Generate AI interpretation of analysis results."""
         summary = f"Analysis type: {analysis_type}\n"
         summary += f"Total papers: {len(papers)}\n"
-        summary += f"Key metrics: {str(results)[:2000]}"
+        # Truncate results to avoid token limits
+        results_str = str(results)
+        if len(results_str) > 3000:
+            results_str = results_str[:3000] + "..."
+        summary += f"Key metrics: {results_str}"
 
         messages = [
             {
                 "role": "system",
-                "content": "You are an expert research analyst. Provide a concise interpretation of bibliometric analysis results. Highlight key trends, notable findings, and potential research gaps. Write in clear academic prose.",
+                "content": (
+                    "You are an expert research analyst. Provide a concise but insightful "
+                    "interpretation of bibliometric analysis results. "
+                    "Highlight: key trends, notable findings, research gaps, and implications. "
+                    "Use clear academic prose with bullet points for key takeaways. "
+                    "Keep the interpretation to 300-500 words."
+                ),
             },
             {"role": "user", "content": f"Please interpret these analysis results:\n\n{summary}"},
         ]

@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue'
+import { ref } from 'vue'
 import type { WSEvent } from '@/types'
 
 export function useWebSocket(sessionId: string | number) {
@@ -7,8 +7,10 @@ export function useWebSocket(sessionId: string | number) {
   const handlers = new Map<string, Set<(data: Record<string, unknown>) => void>>()
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let intentionalClose = false
 
   function connect() {
+    intentionalClose = false
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const url = `${protocol}//${location.host}/ws/${sessionId}`
     ws = new WebSocket(url)
@@ -19,8 +21,9 @@ export function useWebSocket(sessionId: string | number) {
 
     ws.onclose = () => {
       connected.value = false
-      // Auto reconnect
-      reconnectTimer = setTimeout(connect, 3000)
+      if (!intentionalClose) {
+        reconnectTimer = setTimeout(connect, 3000)
+      }
     }
 
     ws.onerror = () => {
@@ -64,8 +67,10 @@ export function useWebSocket(sessionId: string | number) {
   }
 
   function disconnect() {
+    intentionalClose = true
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
+      reconnectTimer = null
     }
     ws?.close()
     ws = null
@@ -73,10 +78,6 @@ export function useWebSocket(sessionId: string | number) {
   }
 
   connect()
-
-  onUnmounted(() => {
-    disconnect()
-  })
 
   return { connected, lastEvent, on, off, send, disconnect }
 }

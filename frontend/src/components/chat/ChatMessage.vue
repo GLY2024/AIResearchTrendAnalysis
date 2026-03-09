@@ -3,9 +3,13 @@ import { computed } from 'vue'
 import type { ChatMessage } from '@/types'
 import StreamingText from './StreamingText.vue'
 
-const props = defineProps<{
-  message: ChatMessage
-}>()
+const props = withDefaults(
+  defineProps<{
+    message: ChatMessage
+    isStreaming?: boolean
+  }>(),
+  { isStreaming: false }
+)
 
 const isUser = computed(() => props.message.role === 'user')
 
@@ -44,7 +48,7 @@ const formattedTime = computed(() => {
       <StreamingText
         v-else
         :text="message.content"
-        :is-streaming="false"
+        :is-streaming="isStreaming"
       />
 
       <!-- Timestamp -->

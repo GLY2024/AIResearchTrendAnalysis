@@ -1,7 +1,9 @@
 """Publisher Agent - generates Markdown + ECharts reports."""
 
 import logging
+from pathlib import Path
 
+from jinja2 import Environment, FileSystemLoader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +12,8 @@ from app.db.models import AnalysisRun, Paper, Report
 from app.services.ai_service import ai_service
 
 logger = logging.getLogger(__name__)
+
+PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
 class PublisherAgent:
@@ -57,22 +61,15 @@ class PublisherAgent:
             for a in analyses
         ])
 
+        # Load system prompt from template
+        try:
+            jinja_env = Environment(loader=FileSystemLoader(str(PROMPTS_DIR)), autoescape=False)
+            system_prompt = jinja_env.get_template("publisher_system.j2").render()
+        except Exception:
+            system_prompt = "You are a research report writer. Generate a comprehensive Markdown report about research trends."
+
         messages = [
-            {
-                "role": "system",
-                "content": """You are a research report writer. Generate a comprehensive Markdown report about research trends.
-
-Structure:
-1. Executive Summary
-2. Research Landscape Overview
-3. Key Trends and Patterns
-4. Top Influential Works
-5. Emerging Research Directions
-6. Research Gaps and Opportunities
-7. Methodology Note
-
-Use clear headings, bullet points, and concise academic prose. Reference specific papers where relevant.""",
-            },
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": f"""Generate a research trend report based on this data:
