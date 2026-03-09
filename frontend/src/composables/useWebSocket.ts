@@ -11,8 +11,10 @@ export function useWebSocket(sessionId: string | number) {
 
   function connect() {
     intentionalClose = false
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${location.host}/ws/${sessionId}`
+    const isTauri = !!(window as Record<string, unknown>).__TAURI_INTERNALS__
+    const url = isTauri
+      ? `ws://127.0.0.1:8721/ws/${sessionId}`
+      : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/${sessionId}`
     ws = new WebSocket(url)
 
     ws.onopen = () => {

@@ -1,8 +1,13 @@
 import axios from 'axios'
 import type { Session, ChatMessage, SearchPlan, Paper, AnalysisRun, Report, AppSetting } from '@/types'
 
+// In Tauri mode, requests go directly to backend; in dev mode, Vite proxy handles it
+const BACKEND_BASE = (window as Record<string, unknown>).__TAURI_INTERNALS__
+  ? 'http://127.0.0.1:8721/api'
+  : '/api'
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: BACKEND_BASE,
   timeout: 30000,
 })
 
@@ -74,9 +79,13 @@ export const settingsApi = {
 }
 
 // Export
+const exportBase = (window as Record<string, unknown>).__TAURI_INTERNALS__
+  ? 'http://127.0.0.1:8721/api'
+  : '/api'
+
 export const exportApi = {
-  risUrl: (sessionId: number) => `/api/export/ris/${sessionId}`,
-  bibtexUrl: (sessionId: number) => `/api/export/bibtex/${sessionId}`,
+  risUrl: (sessionId: number) => `${exportBase}/export/ris/${sessionId}`,
+  bibtexUrl: (sessionId: number) => `${exportBase}/export/bibtex/${sessionId}`,
 }
 
 // Health

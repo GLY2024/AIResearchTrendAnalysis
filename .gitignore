@@ -32,6 +32,12 @@ Thumbs.db
 
 # Tauri
 src-tauri/target/
+frontend/src-tauri/binaries/*.exe
+
+# PyInstaller
+backend/dist/
+backend/build/
+*.spec
 
 # Cache
 .cache/

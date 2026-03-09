@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:pyzotero.readthedocs.io)",
+      "WebFetch(domain:docs.astral.sh)",
+      "WebFetch(domain:digital-science.github.io)",
+      "WebFetch(domain:developer.clarivate.com)",
+      "WebFetch(domain:github.com)",
+      "mcp__context7__query-docs",
+      "WebFetch(domain:v2.tauri.app)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:docs.openalex.org)",
+      "WebFetch(domain:developers.openalex.org)",
+      "Bash(uv:*)",
+      "Bash(gh:*)",
+      "Bash(rm:*)",
+      "Bash(curl:*)",
+      "Bash(npx vue-tsc:*)",
+      "Bash(uv run:*)",
+      "Bash(pkill:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(rustc:*)",
+      "Bash(where.exe rustup:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(rustup:*)",
+      "Bash(npx tauri:*)",
+      "Bash(where:*)",
+      "Bash(export:*)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Read(//c/Program Files/**)",
+      "Bash(cmd:*)"
+    ]
+  }
+}

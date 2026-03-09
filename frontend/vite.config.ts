@@ -5,6 +5,8 @@ import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
 import tailwindcss from '@tailwindcss/vite'
 
+const isTauri = !!process.env.TAURI_ENV_PLATFORM
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -17,8 +19,13 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+  // Prevent Vite from obscuring Rust errors
+  clearScreen: false,
   server: {
-    proxy: {
+    // Tauri expects a fixed port
+    port: 5173,
+    strictPort: true,
+    proxy: isTauri ? undefined : {
       '/api': {
         target: 'http://127.0.0.1:8721',
         changeOrigin: true,
@@ -29,4 +36,6 @@ export default defineConfig({
       },
     },
   },
+  // Environment variables starting with TAURI_ are exposed to the frontend
+  envPrefix: ['VITE_', 'TAURI_ENV_'],
 })
