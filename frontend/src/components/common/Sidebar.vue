@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 
 const router = useRouter()
 const sessionStore = useSessionStore()
+const hoveredSession = ref<number | null>(null)
+const confirmDeleteId = ref<number | null>(null)
 
 const navLinks = [
   { label: 'Chat', path: '/chat', icon: '💬' },
@@ -18,6 +20,17 @@ const navLinks = [
 async function handleNewSession() {
   const session = await sessionStore.createSession('New Session')
   router.push('/chat')
+}
+
+async function handleDeleteSession(id: number) {
+  if (confirmDeleteId.value === id) {
+    await sessionStore.deleteSession(id)
+    confirmDeleteId.value = null
+  } else {
+    confirmDeleteId.value = id
+    // Auto-reset after 3s
+    setTimeout(() => { if (confirmDeleteId.value === id) confirmDeleteId.value = null }, 3000)
+  }
 }
 
 onMounted(() => {
@@ -55,9 +68,15 @@ onMounted(() => {
         Sessions
       </div>
       <ul class="space-y-0.5">
-        <li v-for="session in sessionStore.sessions" :key="session.id">
+        <li
+          v-for="session in sessionStore.sessions"
+          :key="session.id"
+          class="relative group"
+          @mouseenter="hoveredSession = session.id"
+          @mouseleave="hoveredSession = null"
+        >
           <button
-            class="w-full text-left px-3 py-2 rounded-lg text-sm truncate transition-colors"
+            class="w-full text-left px-3 py-2 rounded-lg text-sm truncate transition-colors pr-8"
             :class="
               session.id === sessionStore.currentSessionId
                 ? 'bg-[var(--glass-active)] text-[var(--text-primary)]'
@@ -66,6 +85,18 @@ onMounted(() => {
             @click="sessionStore.setCurrentSession(session.id)"
           >
             {{ session.title }}
+          </button>
+          <!-- Delete button -->
+          <button
+            v-show="hoveredSession === session.id || confirmDeleteId === session.id"
+            class="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded text-xs transition-colors"
+            :class="confirmDeleteId === session.id
+              ? 'bg-[var(--error)] text-white'
+              : 'text-[var(--text-muted)] hover:text-[var(--error)] hover:bg-[var(--error)]/10'"
+            :title="confirmDeleteId === session.id ? 'Click again to confirm' : 'Delete session'"
+            @click.stop="handleDeleteSession(session.id)"
+          >
+            ✕
           </button>
         </li>
       </ul>

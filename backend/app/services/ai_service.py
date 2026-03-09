@@ -73,6 +73,14 @@ class AIService:
                     }
                     if s.key in env_map and s.value:
                         os.environ[env_map[s.key]] = s.value
+                    # Base URLs → environment variables for LiteLLM
+                    base_url_map = {
+                        "openai_base_url": "OPENAI_API_BASE",
+                        "anthropic_base_url": "ANTHROPIC_API_BASE",
+                    }
+                    if s.key in base_url_map and s.value:
+                        os.environ[base_url_map[s.key]] = s.value
+                        logger.info(f"Set {base_url_map[s.key]} = {s.value}")
                     # Model overrides
                     if s.key in self._MODEL_SETTING_KEYS and s.value:
                         attr = self._MODEL_SETTING_KEYS[s.key]

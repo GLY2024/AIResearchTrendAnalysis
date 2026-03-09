@@ -56,6 +56,8 @@ async def update_setting(body: SettingUpdate, db: AsyncSession = Depends(get_ses
         "openai_api_key": "OPENAI_API_KEY",
         "anthropic_api_key": "ANTHROPIC_API_KEY",
         "google_api_key": "GEMINI_API_KEY",
+        "openai_base_url": "OPENAI_API_BASE",
+        "anthropic_base_url": "ANTHROPIC_API_BASE",
     }
     if body.key in env_map:
         os.environ[env_map[body.key]] = body.value
