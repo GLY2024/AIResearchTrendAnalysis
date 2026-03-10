@@ -5,12 +5,17 @@ import os
 
 # When frozen by PyInstaller, set proper base path
 if getattr(sys, "frozen", False):
-    # Running as packaged executable
-    base_dir = os.path.dirname(sys.executable)
-    os.environ.setdefault("ARTA_DATA_DIR", os.path.join(base_dir, "data"))
-    os.chdir(base_dir)
+    # Running as packaged executable (may be in binaries/ subdir)
+    exe_dir = os.path.dirname(sys.executable)
+    app_root = os.path.dirname(exe_dir) if os.path.basename(exe_dir) == "binaries" else exe_dir
+    os.environ.setdefault("ARTA_DATA_DIR", os.path.join(app_root, "ddata"))
+    os.chdir(app_root)
+    # Strip \\?\ prefix if present (Windows UNC extended path)
+    data_dir = os.environ.get("ARTA_DATA_DIR", "")
+    if data_dir.startswith("\\\\?\\"):
+        os.environ["ARTA_DATA_DIR"] = data_dir[4:]
     # Ensure data directory exists
-    os.makedirs("data", exist_ok=True)
+    os.makedirs(os.environ["ARTA_DATA_DIR"], exist_ok=True)
 
 import uvicorn
 from app.main import app

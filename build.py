@@ -57,7 +57,7 @@ def build_backend():
     pyinstaller_args = [
         "uv", "run", "pyinstaller",
         "--noconfirm",
-        "--onedir",
+        "--onefile",
         "--name", "arta-backend",
         "--hidden-import", "uvicorn.logging",
         "--hidden-import", "uvicorn.lifespan",
@@ -92,36 +92,19 @@ def build_backend():
     target_triple = get_target_triple()
     BINARIES_DIR.mkdir(parents=True, exist_ok=True)
 
-    src_dir = BACKEND_DIR / "dist" / "arta-backend"
     ext = ".exe" if platform.system() == "Windows" else ""
     sidecar_name = f"arta-backend-{target_triple}{ext}"
+    src_exe = BACKEND_DIR / "dist" / f"arta-backend{ext}"
+    if not src_exe.exists():
+        raise FileNotFoundError(f"Expected onefile backend at {src_exe}")
 
-    # Keep the PyInstaller runtime layout flat so the renamed sidecar exe can
-    # still find its sibling _internal directory and runtime files.
     legacy_dir = BINARIES_DIR / f"arta-backend-{target_triple}"
     if legacy_dir.exists():
         shutil.rmtree(legacy_dir)
-
     runtime_internal = BINARIES_DIR / "_internal"
     if runtime_internal.exists():
         shutil.rmtree(runtime_internal)
 
-    for item in src_dir.iterdir():
-        if item.name == f"arta-backend{ext}":
-            continue
-        destination = BINARIES_DIR / item.name
-        if destination.exists():
-            if destination.is_dir():
-                shutil.rmtree(destination)
-            else:
-                destination.unlink()
-        if item.is_dir():
-            shutil.copytree(item, destination)
-        else:
-            shutil.copy2(item, destination)
-
-    # Copy the main exe with target triple suffix to binaries root.
-    src_exe = src_dir / f"arta-backend{ext}"
     dest_exe = BINARIES_DIR / sidecar_name
     if dest_exe.exists():
         dest_exe.unlink()

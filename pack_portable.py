@@ -14,7 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 FRONTEND = ROOT / "frontend"
 TAURI_RELEASE = FRONTEND / "src-tauri" / "target" / "release"
-BACKEND_DIST = ROOT / "backend" / "dist" / "arta-backend"
 OUTPUT = ROOT / "dist" / "ARTA-portable"
 
 
@@ -36,11 +35,18 @@ def main():
     triple = get_target_triple()
 
     tauri_exe = TAURI_RELEASE / f"arta{ext}"
-    sidecar_name = f"arta-backend-{triple}{ext}"
+    # Tauri runtime looks for sidecar WITHOUT triple suffix (e.g. arta-backend.exe)
+    sidecar_runtime_name = f"arta-backend{ext}"
+    # Build system uses triple suffix (e.g. arta-backend-x86_64-pc-windows-msvc.exe)
+    sidecar_build_name = f"arta-backend-{triple}{ext}"
+
+    # Sidecar sources (in order of preference)
+    tauri_binaries_sidecar = FRONTEND / "src-tauri" / "binaries" / sidecar_build_name
+    onefile_sidecar = ROOT / "backend" / "dist" / sidecar_runtime_name
 
     if not tauri_exe.exists():
         print(f"ERROR: Tauri exe not found: {tauri_exe}")
-        print("Run 'build_tauri.bat' first.")
+        print("Run 'uv run python build.py' first.")
         return
 
     # Clean output
@@ -52,33 +58,22 @@ def main():
     print(f"Copying {tauri_exe.name}...")
     shutil.copy2(tauri_exe, OUTPUT / f"ARTA{ext}")
 
-    # Copy sidecar binary (Tauri looks for it relative to the exe)
+    # Tauri runtime resolves sidecar as: {resource_dir}/binaries/arta-backend.exe
+    # (no target triple suffix at runtime)
     sidecar_dir = OUTPUT / "binaries"
     sidecar_dir.mkdir()
 
-    # Try onefile first
-    onefile = ROOT / "backend" / "dist" / f"arta-backend{ext}"
-    if onefile.exists():
-        print(f"Copying sidecar (onefile): {sidecar_name}")
-        shutil.copy2(onefile, sidecar_dir / sidecar_name)
-    elif BACKEND_DIST.exists():
-        # Fallback: keep the onedir runtime flat so the renamed exe can load
-        # its sibling _internal directory.
-        print(f"Copying sidecar (onedir): {BACKEND_DIST.name}/")
-        for item in BACKEND_DIST.iterdir():
-            if item.name == f"arta-backend{ext}":
-                continue
-            destination = sidecar_dir / item.name
-            if destination.exists():
-                if destination.is_dir():
-                    shutil.rmtree(destination)
-                else:
-                    destination.unlink()
-            if item.is_dir():
-                shutil.copytree(item, destination)
-            else:
-                shutil.copy2(item, destination)
-        shutil.copy2(BACKEND_DIST / f"arta-backend{ext}", sidecar_dir / sidecar_name)
+    sidecar_src = None
+    if tauri_binaries_sidecar.exists():
+        sidecar_src = tauri_binaries_sidecar
+        print(f"Copying sidecar (tauri binaries): {sidecar_runtime_name}")
+    elif onefile_sidecar.exists():
+        sidecar_src = onefile_sidecar
+        print(f"Copying sidecar (backend dist): {sidecar_runtime_name}")
+
+    if sidecar_src:
+        # Copy with runtime name (no triple suffix)
+        shutil.copy2(sidecar_src, sidecar_dir / sidecar_runtime_name)
     else:
         print("WARNING: No backend sidecar found! Build backend first.")
 
@@ -88,7 +83,7 @@ def main():
         shutil.copy2(webview2, OUTPUT)
 
     # Create data directory
-    (OUTPUT / "data").mkdir()
+    (OUTPUT / "ddata").mkdir()
 
     print(f"\nPortable build ready: {OUTPUT}")
     print(f"Contents:")
