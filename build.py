@@ -96,13 +96,31 @@ def build_backend():
     ext = ".exe" if platform.system() == "Windows" else ""
     sidecar_name = f"arta-backend-{target_triple}{ext}"
 
-    # For onedir mode, copy the entire directory and rename the main exe
-    dest_dir = BINARIES_DIR / f"arta-backend-{target_triple}"
-    if dest_dir.exists():
-        shutil.rmtree(dest_dir)
-    shutil.copytree(src_dir, dest_dir)
+    # Keep the PyInstaller runtime layout flat so the renamed sidecar exe can
+    # still find its sibling _internal directory and runtime files.
+    legacy_dir = BINARIES_DIR / f"arta-backend-{target_triple}"
+    if legacy_dir.exists():
+        shutil.rmtree(legacy_dir)
 
-    # Also copy the main exe with target triple suffix to binaries root
+    runtime_internal = BINARIES_DIR / "_internal"
+    if runtime_internal.exists():
+        shutil.rmtree(runtime_internal)
+
+    for item in src_dir.iterdir():
+        if item.name == f"arta-backend{ext}":
+            continue
+        destination = BINARIES_DIR / item.name
+        if destination.exists():
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+        if item.is_dir():
+            shutil.copytree(item, destination)
+        else:
+            shutil.copy2(item, destination)
+
+    # Copy the main exe with target triple suffix to binaries root.
     src_exe = src_dir / f"arta-backend{ext}"
     dest_exe = BINARIES_DIR / sidecar_name
     if dest_exe.exists():
@@ -110,7 +128,7 @@ def build_backend():
     shutil.copy2(src_exe, dest_exe)
 
     print(f"Backend sidecar built: {dest_exe}")
-    print(f"Backend bundle dir: {dest_dir}")
+    print(f"Backend runtime dir: {BINARIES_DIR}")
 
 
 def build_tauri(dev: bool = False):

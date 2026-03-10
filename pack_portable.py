@@ -62,9 +62,22 @@ def main():
         print(f"Copying sidecar (onefile): {sidecar_name}")
         shutil.copy2(onefile, sidecar_dir / sidecar_name)
     elif BACKEND_DIST.exists():
-        # Fallback: copy onedir contents
+        # Fallback: keep the onedir runtime flat so the renamed exe can load
+        # its sibling _internal directory.
         print(f"Copying sidecar (onedir): {BACKEND_DIST.name}/")
-        shutil.copytree(BACKEND_DIST, sidecar_dir / f"arta-backend-{triple}")
+        for item in BACKEND_DIST.iterdir():
+            if item.name == f"arta-backend{ext}":
+                continue
+            destination = sidecar_dir / item.name
+            if destination.exists():
+                if destination.is_dir():
+                    shutil.rmtree(destination)
+                else:
+                    destination.unlink()
+            if item.is_dir():
+                shutil.copytree(item, destination)
+            else:
+                shutil.copy2(item, destination)
         shutil.copy2(BACKEND_DIST / f"arta-backend{ext}", sidecar_dir / sidecar_name)
     else:
         print("WARNING: No backend sidecar found! Build backend first.")
