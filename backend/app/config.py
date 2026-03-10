@@ -1,7 +1,17 @@
 """Application configuration using pydantic-settings."""
 
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_data_dir() -> Path:
+    env_dir = os.environ.get("ARTA_DATA_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+
+    # In development, keep the database under backend/data regardless of cwd.
+    return (Path(__file__).resolve().parents[1] / "data").resolve()
 
 
 class Settings(BaseSettings):
@@ -18,7 +28,7 @@ class Settings(BaseSettings):
     port: int = 8721
 
     # Database
-    data_dir: Path = Path("data")
+    data_dir: Path = _default_data_dir()
     db_name: str = "research.db"
 
     @property

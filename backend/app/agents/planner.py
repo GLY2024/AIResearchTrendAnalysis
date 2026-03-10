@@ -34,6 +34,8 @@ class PlannerAgent:
         Returns a structured plan with queries, sources, and parameters.
         """
         if available_sources is None:
+            available_sources = await source_registry.list_available_names()
+        if not available_sources:
             available_sources = source_registry.list_sources()
 
         template = self._jinja.get_template("planner_system.j2")

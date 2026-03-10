@@ -36,6 +36,31 @@ class ExecutorAgent:
             if not source:
                 logger.warning(f"Source {source_name} not found, skipping")
                 continue
+            if not await source.is_available():
+                logger.warning(f"Source {source_name} is unavailable, skipping")
+                execution = SearchExecution(
+                    plan_id=plan.id,
+                    source_name=source_name,
+                    query=query_str,
+                    params={"year_from": year_from, "year_to": year_to, "max_results": max_results},
+                    status="failed",
+                    error_message=f"Source '{source_name}' is not configured or unavailable.",
+                    started_at=datetime.utcnow(),
+                    completed_at=datetime.utcnow(),
+                )
+                db.add(execution)
+                await db.commit()
+                await event_bus.emit("search_progress", {
+                    "plan_id": plan.id,
+                    "query_index": i,
+                    "total_queries": len(queries),
+                    "source": source_name,
+                    "query": query_str,
+                    "status": "failed",
+                    "error": execution.error_message,
+                    "total_found": total_found,
+                }, session_id=str(plan.session_id))
+                continue
 
             # Create execution record
             execution = SearchExecution(
@@ -56,7 +81,7 @@ class ExecutorAgent:
                 "source": source_name,
                 "query": query_str,
                 "status": "running",
-            })
+            }, session_id=str(plan.session_id))
 
             try:
                 results = await source.search(
@@ -93,7 +118,8 @@ class ExecutorAgent:
                 "status": execution.status,
                 "results_count": execution.results_count,
                 "total_found": total_found,
-            })
+                "error": execution.error_message,
+            }, session_id=str(plan.session_id))
 
         plan.status = "completed"
         await db.commit()
@@ -101,7 +127,7 @@ class ExecutorAgent:
         await event_bus.emit("search_complete", {
             "plan_id": plan.id,
             "total_papers": total_found,
-        })
+        }, session_id=str(plan.session_id))
 
         return total_found
 

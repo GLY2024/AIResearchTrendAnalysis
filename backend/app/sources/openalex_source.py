@@ -1,7 +1,7 @@
 """OpenAlex data source implementation (free, no auth required)."""
 
 import logging
-from urllib.parse import quote
+import re
 
 import httpx
 
@@ -31,16 +31,17 @@ class OpenAlexSource(BaseDataSource):
         year_to: int | None = None,
     ) -> list[UnifiedPaper]:
         papers = []
-        per_page = min(max_results, 200)
+        per_page = min(max(max_results, 50), 200)
         page = 1
         collected = 0
+        normalized_query = self._normalize_query(query)
+        query_groups = self._extract_query_groups(query)
 
-        while collected < max_results:
+        while collected < max_results and page <= 10:
             params = {
-                "search": query,
+                "search": normalized_query,
                 "per_page": per_page,
                 "page": page,
-                "sort": "cited_by_count:desc",
             }
 
             # Year filter
@@ -64,8 +65,16 @@ class OpenAlexSource(BaseDataSource):
             if not results:
                 break
 
-            for work in results:
-                papers.append(self._parse_work(work))
+            parsed_results = [
+                self._parse_work(work)
+                for work in results
+            ]
+            ranked_results = self._rank_results(parsed_results, query_groups)
+
+            for paper in ranked_results:
+                if paper in papers:
+                    continue
+                papers.append(paper)
                 collected += 1
                 if collected >= max_results:
                     break
@@ -191,3 +200,65 @@ class OpenAlexSource(BaseDataSource):
                 word_positions.append((pos, word))
         word_positions.sort()
         return " ".join(w for _, w in word_positions)
+
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        query = re.sub(r"[()]", " ", query)
+        query = re.sub(r"\b(?:AND|OR|NOT)\b", " ", query, flags=re.IGNORECASE)
+        query = re.sub(r"[\"]", " ", query)
+        query = re.sub(r"\s+", " ", query).strip()
+        return query or "research"
+
+    @staticmethod
+    def _extract_query_groups(query: str) -> list[list[str]]:
+        raw_groups = re.findall(r"\(([^()]+)\)", query)
+        if not raw_groups:
+            raw_groups = re.split(r"\bAND\b", query, flags=re.IGNORECASE)
+
+        groups: list[list[str]] = []
+        for raw_group in raw_groups:
+            terms = [
+                OpenAlexSource._normalize_term(term)
+                for term in re.split(r"\bOR\b", raw_group, flags=re.IGNORECASE)
+            ]
+            cleaned_terms = [term for term in terms if term]
+            if cleaned_terms:
+                groups.append(cleaned_terms)
+        return groups
+
+    @staticmethod
+    def _normalize_term(term: str) -> str:
+        term = term.strip().strip('"').lower()
+        term = re.sub(r"\s+", " ", term)
+        return term
+
+    @classmethod
+    def _rank_results(cls, papers: list[UnifiedPaper], query_groups: list[list[str]]) -> list[UnifiedPaper]:
+        if not query_groups:
+            return papers
+
+        scored: list[tuple[int, int, UnifiedPaper]] = []
+        min_group_matches = min(max(len(query_groups) - 1, 2), len(query_groups))
+
+        for paper in papers:
+            haystack = " ".join([
+                paper.title,
+                paper.abstract,
+                " ".join(paper.keywords or []),
+                " ".join(paper.fields or []),
+            ]).lower()
+            group_matches = 0
+            for group in query_groups:
+                if any(term and term in haystack for term in group):
+                    group_matches += 1
+
+            if group_matches < min_group_matches:
+                continue
+
+            scored.append((group_matches, paper.citation_count, paper))
+
+        if not scored:
+            return papers[: min(len(papers), 50)]
+
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [paper for _, _, paper in scored]

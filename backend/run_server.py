@@ -7,6 +7,7 @@ import os
 if getattr(sys, "frozen", False):
     # Running as packaged executable
     base_dir = os.path.dirname(sys.executable)
+    os.environ.setdefault("ARTA_DATA_DIR", os.path.join(base_dir, "data"))
     os.chdir(base_dir)
     # Ensure data directory exists
     os.makedirs("data", exist_ok=True)

@@ -23,6 +23,9 @@ class SourceRegistry:
     def list_sources(self) -> list[str]:
         return list(self._sources.keys())
 
+    async def list_available_names(self) -> list[str]:
+        return [source.name for source in await self.get_available()]
+
     async def get_available(self) -> list[BaseDataSource]:
         available = []
         for source in self._sources.values():

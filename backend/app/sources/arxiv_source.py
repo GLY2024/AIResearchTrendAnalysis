@@ -56,6 +56,7 @@ class ArxivSource(BaseDataSource):
 
     def _parse_result(self, r) -> UnifiedPaper:
         arxiv_id = r.entry_id.split("/abs/")[-1] if r.entry_id else ""
+        categories = list(getattr(r, "categories", []) or [])
         return UnifiedPaper(
             title=r.title or "",
             abstract=r.summary or "",
@@ -68,7 +69,7 @@ class ArxivSource(BaseDataSource):
             url=r.entry_id or "",
             pdf_url=r.pdf_url or "",
             citation_count=0,  # arXiv doesn't provide citation counts
-            keywords=[c.term for c in r.categories] if hasattr(r, "categories") else [],
+            keywords=[str(category) for category in categories],
             fields=[r.primary_category] if r.primary_category else [],
             paper_type="preprint",
             source_name="arxiv",
