@@ -50,13 +50,6 @@ def build_backend():
     """Package backend with PyInstaller."""
     print("=== Building backend sidecar ===")
 
-    # Install pyinstaller if not present
-    subprocess.run(
-        ["uv", "run", "pip", "install", "pyinstaller"],
-        cwd=BACKEND_DIR,
-        check=True,
-    )
-
     # Collect templates directory
     templates_dir = BACKEND_DIR / "app" / "agents" / "prompts"
     separator = ";" if platform.system() == "Windows" else ":"
@@ -80,9 +73,8 @@ def build_backend():
         "--hidden-import", "uvicorn.protocols.websockets.websockets_impl",
         "--hidden-import", "aiosqlite",
         "--hidden-import", "sqlalchemy.dialects.sqlite",
-        "--hidden-import", "litellm",
-        "--collect-all", "litellm",
-        "--collect-data", "litellm",
+        "--hidden-import", "openai",
+        "--hidden-import", "httpx",
     ]
 
     # Add templates
