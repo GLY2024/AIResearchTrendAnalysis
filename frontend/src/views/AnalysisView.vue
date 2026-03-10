@@ -5,6 +5,7 @@ import { analysisApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import GlassCard from '@/components/common/GlassCard.vue'
+import CollapsibleInfoCard from '@/components/common/CollapsibleInfoCard.vue'
 import ChartContainer from '@/components/common/ChartContainer.vue'
 import StreamingText from '@/components/chat/StreamingText.vue'
 import SkeletonCard from '@/components/common/SkeletonCard.vue'
@@ -246,16 +247,7 @@ onMounted(loadRuns)
             </div>
           </GlassCard>
 
-          <GlassCard>
-            <template #header>
-              <div class="surface-panel__header !mb-0">
-                <div>
-                  <p class="surface-panel__eyebrow">Storyline</p>
-                  <h3 class="surface-panel__title">Recommended presentation order</h3>
-                </div>
-              </div>
-            </template>
-
+          <CollapsibleInfoCard eyebrow="Storyline" title="Recommended presentation order">
             <div class="space-y-3">
               <div class="callout callout--accent">
                 <div class="text-sm font-semibold text-[var(--text-primary)]">1. Start with trend and bibliometrics</div>
@@ -270,7 +262,7 @@ onMounted(loadRuns)
                 </div>
               </div>
             </div>
-          </GlassCard>
+          </CollapsibleInfoCard>
         </div>
 
         <div class="space-y-6">

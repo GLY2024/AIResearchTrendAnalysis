@@ -5,6 +5,7 @@ import { exportApi, reportApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import GlassCard from '@/components/common/GlassCard.vue'
+import CollapsibleInfoCard from '@/components/common/CollapsibleInfoCard.vue'
 import StreamingText from '@/components/chat/StreamingText.vue'
 import ChartContainer from '@/components/common/ChartContainer.vue'
 import SkeletonCard from '@/components/common/SkeletonCard.vue'
@@ -270,16 +271,7 @@ onMounted(loadReports)
             </div>
           </GlassCard>
 
-          <GlassCard>
-            <template #header>
-              <div class="surface-panel__header !mb-0">
-                <div>
-                  <p class="surface-panel__eyebrow">Presentation note</p>
-                  <h3 class="surface-panel__title">How to narrate the output</h3>
-                </div>
-              </div>
-            </template>
-
+          <CollapsibleInfoCard eyebrow="Presentation note" title="How to narrate the output">
             <div class="space-y-3">
               <div class="callout callout--accent">
                 <div class="text-sm font-semibold text-[var(--text-primary)]">Lead with structure, not prose</div>
@@ -294,7 +286,7 @@ onMounted(loadReports)
                 </div>
               </div>
             </div>
-          </GlassCard>
+          </CollapsibleInfoCard>
         </div>
 
         <GlassCard v-if="selectedReport" class="min-w-0">

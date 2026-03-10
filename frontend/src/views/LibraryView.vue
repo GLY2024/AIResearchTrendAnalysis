@@ -5,6 +5,7 @@ import { paperApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import SkeletonCard from '@/components/common/SkeletonCard.vue'
+import CollapsibleInfoCard from '@/components/common/CollapsibleInfoCard.vue'
 
 const sessionStore = useSessionStore()
 const backendState = useBackendState()
@@ -499,16 +500,7 @@ onMounted(loadPapers)
         </div>
 
         <div class="space-y-4">
-          <GlassCard>
-            <template #header>
-              <div class="surface-panel__header !mb-0">
-                <div>
-                  <p class="surface-panel__eyebrow">Curation notes</p>
-                  <h3 class="surface-panel__title">What to tighten before analysis</h3>
-                </div>
-              </div>
-            </template>
-
+          <CollapsibleInfoCard eyebrow="Curation notes" title="What to tighten before analysis">
             <div class="space-y-3">
               <div class="callout callout--accent">
                 <div class="text-sm font-semibold text-[var(--text-primary)]">Trim noise early</div>
@@ -523,7 +515,7 @@ onMounted(loadPapers)
                 </div>
               </div>
             </div>
-          </GlassCard>
+          </CollapsibleInfoCard>
         </div>
       </div>
     </template>
