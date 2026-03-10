@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { settingsApi } from '@/composables/useApi'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
+import CollapsibleInfoCard from '@/components/common/CollapsibleInfoCard.vue'
 
 interface Provider {
   id: string
@@ -452,32 +453,37 @@ onMounted(loadSettings)
       </div>
     </section>
 
-    <div v-if="showOnboarding" class="callout callout--accent">
+    <CollapsibleInfoCard
+      v-if="showOnboarding"
+      eyebrow="Setup"
+      title="First-run checklist"
+      :default-open="true"
+    >
       <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <div class="text-sm font-semibold text-[var(--text-primary)]">First-run setup required</div>
+          <div class="text-sm font-semibold text-[var(--text-primary)]">Provider access comes first</div>
           <div class="mt-1 text-sm text-[var(--text-secondary)]">
-            Configure at least one LLM provider and map a model to the workflow roles below.
+            Configure at least one LLM provider, verify the connection, and then assign a model to each workflow role below.
           </div>
         </div>
         <span class="capsule">Start with OpenAI-compatible or OpenRouter</span>
       </div>
-    </div>
+    </CollapsibleInfoCard>
 
-    <div class="callout callout--warm">
+    <CollapsibleInfoCard
+      eyebrow="Preset"
+      title="DeepBricks quick preset"
+    >
       <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div class="text-sm font-semibold text-[var(--text-primary)]">DeepBricks quick preset</div>
-          <div class="mt-1 text-sm text-[var(--text-secondary)]">
-            If you want me to debug against DeepBricks later, I will use the OpenAI-compatible slot with base URL
-            <code class="rounded bg-black/20 px-1.5 py-0.5">https://api.deepbricks.ai/v1</code>.
-          </div>
+        <div class="text-sm text-[var(--text-secondary)]">
+          If you want me to debug against DeepBricks later, I will use the OpenAI-compatible slot with base URL
+          <code class="rounded bg-black/20 px-1.5 py-0.5">https://api.deepbricks.ai/v1</code>.
         </div>
         <button class="glass-btn glass-btn-warm" @click="applyDeepBricksPreset">
           Apply DeepBricks base URL
         </button>
       </div>
-    </div>
+    </CollapsibleInfoCard>
 
     <div
       v-if="pageError"

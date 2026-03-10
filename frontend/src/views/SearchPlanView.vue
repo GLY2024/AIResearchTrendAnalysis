@@ -7,6 +7,7 @@ import { useSessionStore } from '@/stores/session'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import GlassCard from '@/components/common/GlassCard.vue'
+import CollapsibleInfoCard from '@/components/common/CollapsibleInfoCard.vue'
 
 const router = useRouter()
 const sessionStore = useSessionStore()
@@ -280,6 +281,32 @@ onUnmounted(() => {
         </div>
       </div>
     </section>
+
+    <CollapsibleInfoCard
+      eyebrow="Review guide"
+      title="How to evaluate a plan before execution"
+    >
+      <div class="grid gap-3 lg:grid-cols-3">
+        <div class="callout">
+          <div class="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Approve</div>
+          <p class="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+            Use approval when the topic, year range, and source mix are already acceptable and you want to start collecting papers immediately.
+          </p>
+        </div>
+        <div class="callout">
+          <div class="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Edit</div>
+          <p class="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+            Rejecting a plan no longer blocks the workflow. You can reopen it, adjust queries, snowball rules, and notes, then save the revised draft.
+          </p>
+        </div>
+        <div class="callout">
+          <div class="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Snowball</div>
+          <p class="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+            Treat snowball as a second-stage expansion. Keep it off unless the seed set is clean enough to justify proposal review and manual approval.
+          </p>
+        </div>
+      </div>
+    </CollapsibleInfoCard>
 
     <div v-if="!sessionStore.currentSession" class="surface-panel p-8">
       <h3 class="surface-panel__title">Select a session first.</h3>
@@ -555,25 +582,36 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <div class="grid gap-4 lg:grid-cols-2" v-if="plan.plan_data.inclusion_criteria?.length || plan.plan_data.exclusion_criteria?.length">
-                <div v-if="plan.plan_data.inclusion_criteria?.length" class="callout callout--success">
-                  <div class="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Inclusion criteria</div>
-                  <ul class="list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
-                    <li v-for="(criterion, index) in plan.plan_data.inclusion_criteria" :key="index">{{ criterion }}</li>
-                  </ul>
-                </div>
+              <CollapsibleInfoCard
+                v-if="plan.plan_data.inclusion_criteria?.length || plan.plan_data.exclusion_criteria?.length || plan.plan_data.notes"
+                eyebrow="Screening notes"
+                title="Criteria and planner notes"
+              >
+                <div class="space-y-4">
+                  <div class="grid gap-4 lg:grid-cols-2" v-if="plan.plan_data.inclusion_criteria?.length || plan.plan_data.exclusion_criteria?.length">
+                    <div v-if="plan.plan_data.inclusion_criteria?.length" class="callout callout--success">
+                      <div class="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Inclusion criteria</div>
+                      <ul class="list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
+                        <li v-for="(criterion, index) in plan.plan_data.inclusion_criteria" :key="index">{{ criterion }}</li>
+                      </ul>
+                    </div>
 
-                <div v-if="plan.plan_data.exclusion_criteria?.length" class="callout callout--warm">
-                  <div class="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Exclusion criteria</div>
-                  <ul class="list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
-                    <li v-for="(criterion, index) in plan.plan_data.exclusion_criteria" :key="index">{{ criterion }}</li>
-                  </ul>
-                </div>
-              </div>
+                    <div v-if="plan.plan_data.exclusion_criteria?.length" class="callout callout--warm">
+                      <div class="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Exclusion criteria</div>
+                      <ul class="list-disc space-y-1 pl-5 text-sm text-[var(--text-secondary)]">
+                        <li v-for="(criterion, index) in plan.plan_data.exclusion_criteria" :key="index">{{ criterion }}</li>
+                      </ul>
+                    </div>
+                  </div>
 
-              <div v-if="plan.plan_data.notes" class="text-sm italic text-[var(--text-muted)]">
-                {{ plan.plan_data.notes }}
-              </div>
+                  <div v-if="plan.plan_data.notes" class="callout">
+                    <div class="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Planner note</div>
+                    <div class="text-sm italic text-[var(--text-secondary)]">
+                      {{ plan.plan_data.notes }}
+                    </div>
+                  </div>
+                </div>
+              </CollapsibleInfoCard>
 
               <div v-if="['draft', 'rejected'].includes(plan.status)" class="flex flex-wrap gap-3 pt-2">
                 <button
