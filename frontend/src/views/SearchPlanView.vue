@@ -354,7 +354,7 @@ onUnmounted(() => {
               <div class="min-w-0 flex-1">
                 <p class="surface-panel__eyebrow">Plan topic</p>
                 <div class="flex flex-wrap items-center gap-3">
-                  <h3 class="surface-panel__title truncate">{{ plan.plan_data.topic }}</h3>
+                  <h3 class="surface-panel__title break-words">{{ plan.plan_data.topic }}</h3>
                   <span :class="['badge', statusBadge[plan.status]]">{{ plan.status }}</span>
                 </div>
                 <div class="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">

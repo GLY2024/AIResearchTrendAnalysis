@@ -8,8 +8,8 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <div class="glass-card" :class="{ 'p-5': padding }">
-    <div v-if="$slots.header || title" class="mb-4">
+  <div class="glass-card" :class="{ 'p-6': padding }">
+    <div v-if="$slots.header || title" class="mb-5">
       <slot name="header">
         <h3 class="text-base font-semibold text-[var(--text-primary)]">{{ title }}</h3>
       </slot>

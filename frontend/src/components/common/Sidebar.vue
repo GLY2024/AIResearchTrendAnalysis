@@ -106,8 +106,8 @@ function formatDate(dateStr: string): string {
     ]"
     style="width: var(--sidebar-width)"
   >
-    <div class="px-4 pt-4">
-      <div class="rounded-[28px] border border-white/10 bg-white/[0.03] p-4">
+    <div class="px-5 pt-5">
+      <div class="rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
         <div class="flex items-start justify-between gap-3">
           <div class="flex items-center gap-3">
             <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,var(--accent-primary),#257dff)] text-sm font-bold text-white shadow-[0_10px_24px_rgba(77,184,255,0.25)]">
@@ -154,7 +154,7 @@ function formatDate(dateStr: string): string {
       </div>
     </div>
 
-    <div class="flex-1 overflow-y-auto px-4 pb-4 pt-4">
+    <div class="flex-1 overflow-y-auto px-5 pb-5 pt-5">
       <div class="mb-3 flex items-center justify-between px-1">
         <div class="text-[10px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Active sessions</div>
         <div class="text-[11px] text-[var(--text-muted)]">{{ sessionStore.sessions.length }}</div>
@@ -172,7 +172,7 @@ function formatDate(dateStr: string): string {
         >
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
-              <div class="truncate text-sm font-semibold text-[var(--text-primary)]">
+              <div class="text-sm font-semibold leading-6 text-[var(--text-primary)] break-words">
                 {{ session.title }}
               </div>
               <div class="mt-1 flex flex-wrap gap-2 text-[11px] text-[var(--text-muted)]">
@@ -206,7 +206,7 @@ function formatDate(dateStr: string): string {
       </div>
     </div>
 
-    <nav class="border-t border-white/8 px-4 pb-4 pt-4">
+    <nav class="border-t border-white/8 px-5 pb-5 pt-5">
       <div class="mb-3 px-1 text-[10px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Pipeline</div>
       <ul class="space-y-2">
         <li v-for="link in navLinks" :key="link.path">
@@ -222,8 +222,8 @@ function formatDate(dateStr: string): string {
               </svg>
             </div>
             <div class="min-w-0">
-              <div class="truncate text-sm font-semibold">{{ link.label }}</div>
-              <div class="truncate text-[11px] text-[var(--text-muted)]">{{ link.hint }}</div>
+              <div class="text-sm font-semibold leading-6">{{ link.label }}</div>
+              <div class="text-[11px] leading-5 text-[var(--text-muted)]">{{ link.hint }}</div>
             </div>
           </router-link>
         </li>
@@ -241,7 +241,7 @@ function formatDate(dateStr: string): string {
 
 .session-card {
   position: relative;
-  padding: 14px;
+  padding: 15px 16px;
   border-radius: 20px;
   border: 1px solid rgba(171, 202, 239, 0.08);
   background: rgba(255, 255, 255, 0.03);
@@ -265,10 +265,10 @@ function formatDate(dateStr: string): string {
 
 .nav-link {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
-  padding: 12px 14px;
-  border-radius: 18px;
+  padding: 13px 16px;
+  border-radius: 20px;
   border: 1px solid transparent;
   color: var(--text-secondary);
   transition:
@@ -293,11 +293,12 @@ function formatDate(dateStr: string): string {
 
 .nav-link__icon {
   display: flex;
-  height: 38px;
-  width: 38px;
+  height: 40px;
+  width: 40px;
   align-items: center;
   justify-content: center;
-  border-radius: 14px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.05);
+  margin-top: 2px;
 }
 </style>

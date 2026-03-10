@@ -170,13 +170,13 @@ onUnmounted(() => {
 .app-main {
   min-height: 100vh;
   overflow: auto;
-  padding: 14px 24px 32px;
+  padding: 18px 28px 40px;
 }
 
 @media (max-width: 767px) {
   .app-main {
     margin-left: 0 !important;
-    padding: 64px 14px 24px;
+    padding: 68px 16px 28px;
   }
 }
 </style>
