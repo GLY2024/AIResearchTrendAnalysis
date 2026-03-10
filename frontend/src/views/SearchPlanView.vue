@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, onUnmounted, computed } from 'vue'
+import { ref, onMounted, watch, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import type { SearchPlan } from '@/types'
 import { searchApi } from '@/composables/useApi'
@@ -44,7 +44,6 @@ function setupWebSocket() {
   ws.on('search_progress', (data: Record<string, unknown>) => {
     const progress = data as unknown as SearchProgress
     activeProgress.value.set(progress.plan_id, progress)
-    // Update plan status in the list
     const plan = plans.value.find(p => p.id === progress.plan_id)
     if (plan && plan.status === 'approved') {
       plan.status = 'executing'
@@ -55,7 +54,6 @@ function setupWebSocket() {
     const planId = data.plan_id as number
     completedSearches.value.set(planId, { total_papers: data.total_papers as number })
     activeProgress.value.delete(planId)
-    // Update plan status
     const plan = plans.value.find(p => p.id === planId)
     if (plan) {
       plan.status = 'completed'
@@ -90,6 +88,9 @@ async function loadPlans() {
   actionError.value = ''
   try {
     plans.value = await searchApi.listPlans(sessionStore.currentSession.id)
+    // Auto-expand draft plans
+    const draftPlan = plans.value.find(p => p.status === 'draft')
+    if (draftPlan) expandedId.value = draftPlan.id
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : 'Failed to load search plans.'
     await checkBackend(true)
@@ -124,6 +125,18 @@ function getProgressPercent(planId: number): number {
   const p = activeProgress.value.get(planId)
   if (!p) return 0
   return Math.round(((p.query_index + (p.status === 'completed' ? 1 : 0.5)) / p.total_queries) * 100)
+}
+
+// Source color mapping
+const sourceColors: Record<string, string> = {
+  'semantic_scholar': 'bg-blue-500/20 text-blue-400',
+  'openalex': 'bg-green-500/20 text-green-400',
+  'scopus': 'bg-orange-500/20 text-orange-400',
+  'pubmed': 'bg-red-500/20 text-red-400',
+  'crossref': 'bg-purple-500/20 text-purple-400',
+}
+function getSourceClass(source: string): string {
+  return sourceColors[source.toLowerCase()] || 'bg-white/10 text-[var(--text-secondary)]'
 }
 
 const statusBadge: Record<string, string> = {
@@ -187,17 +200,37 @@ onUnmounted(() => {
           class="flex items-center justify-between cursor-pointer"
           @click="toggle(plan.id)"
         >
-          <div>
-            <span class="font-medium text-[var(--text-primary)]">
-              {{ plan.plan_data.topic }}
-            </span>
-            <span :class="['badge ml-3', statusBadge[plan.status]]">
-              {{ plan.status }}
-            </span>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-medium text-[var(--text-primary)]">
+                {{ plan.plan_data.topic }}
+              </span>
+              <span :class="['badge', statusBadge[plan.status]]">
+                {{ plan.status }}
+              </span>
+            </div>
+            <!-- Plan summary -->
+            <div class="flex items-center gap-3 mt-1.5 text-xs text-[var(--text-muted)]">
+              <span>{{ plan.plan_data.queries?.length ?? 0 }} queries</span>
+              <span v-if="plan.plan_data.year_range?.from || plan.plan_data.year_range?.to">
+                {{ plan.plan_data.year_range?.from ?? '...' }}–{{ plan.plan_data.year_range?.to ?? 'now' }}
+              </span>
+              <span v-if="plan.plan_data.snowball_config?.enabled" class="badge badge-info text-[10px]">
+                snowball
+              </span>
+            </div>
           </div>
-          <span class="text-[var(--text-muted)] text-xs">
-            {{ new Date(plan.created_at).toLocaleDateString() }}
-          </span>
+          <div class="flex items-center gap-3 shrink-0">
+            <span class="text-[var(--text-muted)] text-xs">
+              {{ new Date(plan.created_at).toLocaleDateString() }}
+            </span>
+            <svg
+              width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+              class="text-[var(--text-muted)] transition-transform" :class="expandedId === plan.id ? 'rotate-180' : ''"
+            >
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </div>
         </div>
 
         <!-- Search progress bar -->
@@ -235,19 +268,19 @@ onUnmounted(() => {
         </div>
 
         <!-- Expanded detail -->
-        <div v-if="expandedId === plan.id" class="mt-4 space-y-3 text-sm">
+        <div v-if="expandedId === plan.id" class="mt-5 space-y-4 text-sm">
           <p class="text-[var(--text-secondary)]">{{ plan.plan_data.description }}</p>
 
-          <!-- Year range -->
-          <div v-if="plan.plan_data.year_range?.from || plan.plan_data.year_range?.to">
-            <span class="text-[var(--text-muted)]">Year range:</span>
-            {{ plan.plan_data.year_range.from ?? '...' }} - {{ plan.plan_data.year_range.to ?? 'present' }}
-          </div>
-
-          <!-- Max results -->
-          <div v-if="plan.plan_data.max_results_per_query">
-            <span class="text-[var(--text-muted)]">Max results per query:</span>
-            {{ plan.plan_data.max_results_per_query }}
+          <!-- Year range & max results -->
+          <div class="flex flex-wrap gap-4 text-xs">
+            <div v-if="plan.plan_data.year_range?.from || plan.plan_data.year_range?.to">
+              <span class="text-[var(--text-muted)]">Year range:</span>
+              {{ plan.plan_data.year_range.from ?? '...' }} - {{ plan.plan_data.year_range.to ?? 'present' }}
+            </div>
+            <div v-if="plan.plan_data.max_results_per_query">
+              <span class="text-[var(--text-muted)]">Max results per query:</span>
+              {{ plan.plan_data.max_results_per_query }}
+            </div>
           </div>
 
           <!-- Snowball config -->
@@ -258,26 +291,41 @@ onUnmounted(() => {
 
           <!-- Queries -->
           <div>
-            <h4 class="text-[var(--text-muted)] mb-2">Queries ({{ plan.plan_data.queries?.length ?? 0 }})</h4>
-            <div
-              v-for="(q, i) in plan.plan_data.queries"
-              :key="i"
-              class="glass-card p-3 mb-2"
-            >
-              <div class="font-mono text-xs text-[var(--accent-primary)]">{{ q.source }}</div>
-              <div class="text-[var(--text-primary)] mt-1">{{ q.query }}</div>
-              <div class="text-[var(--text-muted)] text-xs mt-1">{{ q.rationale }}</div>
+            <h4 class="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-3">
+              Queries ({{ plan.plan_data.queries?.length ?? 0 }})
+            </h4>
+            <div class="space-y-2.5">
+              <div
+                v-for="(q, i) in plan.plan_data.queries"
+                :key="i"
+                class="glass-card p-4"
+              >
+                <div class="flex items-center gap-2 mb-2">
+                  <span
+                    class="text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide"
+                    :class="getSourceClass(q.source)"
+                  >
+                    {{ q.source }}
+                  </span>
+                </div>
+                <div class="text-[var(--text-primary)] font-mono text-xs leading-relaxed">{{ q.query }}</div>
+                <div class="text-[var(--text-muted)] text-xs mt-1.5">{{ q.rationale }}</div>
+              </div>
             </div>
           </div>
 
-          <!-- Inclusion / Exclusion -->
-          <div v-if="plan.plan_data.inclusion_criteria?.length" class="text-[var(--text-secondary)]">
-            <span class="text-[var(--text-muted)]">Include:</span>
-            {{ plan.plan_data.inclusion_criteria.join('; ') }}
+          <!-- Inclusion / Exclusion as bullet lists -->
+          <div v-if="plan.plan_data.inclusion_criteria?.length" class="space-y-1">
+            <h4 class="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Inclusion Criteria</h4>
+            <ul class="list-disc list-inside text-sm text-[var(--text-secondary)] space-y-0.5 pl-1">
+              <li v-for="(c, i) in plan.plan_data.inclusion_criteria" :key="i">{{ c }}</li>
+            </ul>
           </div>
-          <div v-if="plan.plan_data.exclusion_criteria?.length" class="text-[var(--text-secondary)]">
-            <span class="text-[var(--text-muted)]">Exclude:</span>
-            {{ plan.plan_data.exclusion_criteria.join('; ') }}
+          <div v-if="plan.plan_data.exclusion_criteria?.length" class="space-y-1">
+            <h4 class="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Exclusion Criteria</h4>
+            <ul class="list-disc list-inside text-sm text-[var(--text-secondary)] space-y-0.5 pl-1">
+              <li v-for="(c, i) in plan.plan_data.exclusion_criteria" :key="i">{{ c }}</li>
+            </ul>
           </div>
 
           <!-- Notes -->

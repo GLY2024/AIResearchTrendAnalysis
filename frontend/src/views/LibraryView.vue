@@ -4,6 +4,7 @@ import type { Paper } from '@/types'
 import { paperApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
+import SkeletonCard from '@/components/common/SkeletonCard.vue'
 
 const sessionStore = useSessionStore()
 const backendState = useBackendState()
@@ -12,6 +13,7 @@ const loading = ref(false)
 const expandedId = ref<number | null>(null)
 const selectedIds = ref<Set<number>>(new Set())
 const actionError = ref('')
+const showFilters = ref(true)
 
 // Filters
 const filterSource = ref('')
@@ -27,13 +29,24 @@ const sortAsc = ref(false)
 const availableSources = ref<string[]>([])
 const availableMethods = ref<string[]>([])
 
+const hasActiveFilters = computed(() =>
+  filterSource.value || filterDiscovery.value || filterYearFrom.value || filterYearTo.value || filterIncludedOnly.value
+)
+
+function clearFilters() {
+  filterSource.value = ''
+  filterDiscovery.value = ''
+  filterYearFrom.value = null
+  filterYearTo.value = null
+  filterIncludedOnly.value = false
+}
+
 async function loadPapers() {
   if (!sessionStore.currentSession) return
   loading.value = true
   actionError.value = ''
   try {
     papers.value = await paperApi.list(sessionStore.currentSession.id)
-    // Load filter options
     const resp = await paperApi.sources(sessionStore.currentSession.id)
     availableSources.value = resp.sources
     availableMethods.value = resp.discovery_methods
@@ -99,7 +112,6 @@ function toggleSelect(id: number) {
   } else {
     selectedIds.value.add(id)
   }
-  // Force reactivity
   selectedIds.value = new Set(selectedIds.value)
 }
 
@@ -121,7 +133,6 @@ async function batchInclude(include: boolean) {
 
   try {
     await paperApi.batchUpdate([...selectedIds.value], include)
-    // Update local state
     for (const p of papers.value) {
       if (selectedIds.value.has(p.id)) {
         p.is_included = include
@@ -159,7 +170,7 @@ onMounted(loadPapers)
 
 <template>
   <div>
-    <div class="flex items-center justify-between mb-1">
+    <div class="flex items-center justify-between mb-4">
       <h1 class="text-xl font-semibold text-[var(--text-primary)]">Paper Library</h1>
       <div class="text-sm text-[var(--text-secondary)]">
         {{ filteredPapers.length }} papers
@@ -189,33 +200,56 @@ onMounted(loadPapers)
       </div>
 
       <!-- Filters -->
-      <div class="glass-card p-4 mb-4 flex flex-wrap gap-4 items-end">
-        <div>
-          <label class="block text-xs text-[var(--text-muted)] mb-1">Source</label>
-          <select v-model="filterSource" class="glass-input w-36">
-            <option value="">All</option>
-            <option v-for="s in availableSources" :key="s" :value="s">{{ s }}</option>
-          </select>
+      <div class="glass-card mb-4 overflow-hidden">
+        <button
+          class="w-full flex items-center justify-between px-4 py-3 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+          @click="showFilters = !showFilters"
+        >
+          <span class="font-medium">Filters</span>
+          <div class="flex items-center gap-2">
+            <button
+              v-if="hasActiveFilters"
+              class="text-xs text-[var(--accent-primary)] hover:underline"
+              @click.stop="clearFilters"
+            >
+              Clear all
+            </button>
+            <svg
+              width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+              class="transition-transform" :class="showFilters ? 'rotate-180' : ''"
+            >
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </div>
+        </button>
+        <div v-if="showFilters" class="px-4 pb-4 flex flex-wrap gap-4 items-end border-t border-white/5 pt-3">
+          <div>
+            <label class="block text-xs text-[var(--text-muted)] mb-1">Source</label>
+            <select v-model="filterSource" class="glass-input w-36 text-sm">
+              <option value="">All</option>
+              <option v-for="s in availableSources" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-[var(--text-muted)] mb-1">Found via</label>
+            <select v-model="filterDiscovery" class="glass-input w-40 text-sm">
+              <option value="">All</option>
+              <option v-for="m in availableMethods" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-[var(--text-muted)] mb-1">Year from</label>
+            <input v-model.number="filterYearFrom" type="number" class="glass-input w-24 text-sm" placeholder="2020" />
+          </div>
+          <div>
+            <label class="block text-xs text-[var(--text-muted)] mb-1">Year to</label>
+            <input v-model.number="filterYearTo" type="number" class="glass-input w-24 text-sm" placeholder="2025" />
+          </div>
+          <label class="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+            <input v-model="filterIncludedOnly" type="checkbox" class="accent-[var(--accent-primary)]" />
+            Included only
+          </label>
         </div>
-        <div>
-          <label class="block text-xs text-[var(--text-muted)] mb-1">Found via</label>
-          <select v-model="filterDiscovery" class="glass-input w-40">
-            <option value="">All</option>
-            <option v-for="m in availableMethods" :key="m" :value="m">{{ m }}</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs text-[var(--text-muted)] mb-1">Year from</label>
-          <input v-model.number="filterYearFrom" type="number" class="glass-input w-24" placeholder="2020" />
-        </div>
-        <div>
-          <label class="block text-xs text-[var(--text-muted)] mb-1">Year to</label>
-          <input v-model.number="filterYearTo" type="number" class="glass-input w-24" placeholder="2025" />
-        </div>
-        <label class="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-          <input v-model="filterIncludedOnly" type="checkbox" class="accent-[var(--accent-primary)]" />
-          Included only
-        </label>
       </div>
 
       <!-- Batch actions -->
@@ -226,7 +260,10 @@ onMounted(loadPapers)
         <button class="glass-btn text-xs text-[var(--error)]" :disabled="backendState.status !== 'online'" @click="batchDelete">Delete</button>
       </div>
 
-      <div v-if="loading" class="text-[var(--text-muted)]">Loading papers...</div>
+      <!-- Loading -->
+      <div v-if="loading" class="space-y-2">
+        <SkeletonCard v-for="i in 5" :key="i" height="50px" :lines="1" />
+      </div>
 
       <!-- Table -->
       <div v-else class="glass-card overflow-hidden">
@@ -287,23 +324,55 @@ onMounted(loadPapers)
                 <td class="p-3 text-[var(--text-secondary)]">{{ paper.citation_count }}</td>
                 <td class="p-3 text-[var(--text-muted)] hidden lg:table-cell">{{ paper.source ?? '-' }}</td>
               </tr>
-              <!-- Expanded row -->
+              <!-- Expanded row - redesigned -->
               <tr v-if="expandedId === paper.id">
-                <td colspan="6" class="p-4 bg-white/[0.03]">
-                  <div class="space-y-2 text-sm">
-                    <p class="text-[var(--text-secondary)]">{{ paper.abstract || 'No abstract available.' }}</p>
-                    <div class="flex flex-wrap gap-1">
-                      <span
-                        v-for="kw in paper.keywords"
-                        :key="kw"
-                        class="badge badge-info"
-                      >{{ kw }}</span>
+                <td colspan="6" class="p-5 bg-white/[0.03] border-b border-white/5">
+                  <div class="space-y-4">
+                    <!-- Abstract -->
+                    <div>
+                      <h5 class="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">Abstract</h5>
+                      <p class="text-sm text-[var(--text-secondary)] leading-relaxed">
+                        {{ paper.abstract || 'No abstract available.' }}
+                      </p>
                     </div>
-                    <div class="text-xs text-[var(--text-muted)] flex flex-wrap gap-4">
-                      <span v-if="paper.doi">DOI: {{ paper.doi }}</span>
-                      <span v-if="paper.journal">Journal: {{ paper.journal }}</span>
-                      <span v-if="paper.discovery_method">Found via: {{ paper.discovery_method }}</span>
-                      <span v-if="paper.fields?.length">Fields: {{ paper.fields.join(', ') }}</span>
+
+                    <!-- Keywords badges -->
+                    <div v-if="paper.keywords?.length">
+                      <h5 class="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">Keywords</h5>
+                      <div class="flex flex-wrap gap-1.5">
+                        <span
+                          v-for="kw in paper.keywords"
+                          :key="kw"
+                          class="badge badge-info"
+                        >{{ kw }}</span>
+                      </div>
+                    </div>
+
+                    <!-- Metadata grid -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div v-if="paper.journal" class="glass-card p-2.5">
+                        <div class="text-[10px] text-[var(--text-muted)] uppercase">Journal</div>
+                        <div class="text-xs text-[var(--text-primary)] mt-0.5 truncate">{{ paper.journal }}</div>
+                      </div>
+                      <div v-if="paper.discovery_method" class="glass-card p-2.5">
+                        <div class="text-[10px] text-[var(--text-muted)] uppercase">Found via</div>
+                        <div class="text-xs text-[var(--text-primary)] mt-0.5">{{ paper.discovery_method }}</div>
+                      </div>
+                      <div v-if="paper.fields?.length" class="glass-card p-2.5">
+                        <div class="text-[10px] text-[var(--text-muted)] uppercase">Fields</div>
+                        <div class="text-xs text-[var(--text-primary)] mt-0.5 truncate">{{ paper.fields.join(', ') }}</div>
+                      </div>
+                      <div v-if="paper.doi" class="glass-card p-2.5">
+                        <div class="text-[10px] text-[var(--text-muted)] uppercase">DOI</div>
+                        <a
+                          :href="`https://doi.org/${paper.doi}`"
+                          target="_blank"
+                          rel="noopener"
+                          class="text-xs text-[var(--accent-primary)] hover:underline mt-0.5 block truncate"
+                        >
+                          {{ paper.doi }}
+                        </a>
+                      </div>
                     </div>
                   </div>
                 </td>

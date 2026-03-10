@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { RouterView } from 'vue-router'
 import Sidebar from '@/components/common/Sidebar.vue'
 import { useSessionStore } from '@/stores/session'
@@ -7,6 +7,7 @@ import { checkBackend, getBackendStartCommand, useBackendState } from '@/composa
 
 const sessionStore = useSessionStore()
 const backendState = useBackendState()
+const mobileMenuOpen = ref(false)
 
 let healthPoller: ReturnType<typeof setInterval> | null = null
 
@@ -45,8 +46,26 @@ onUnmounted(() => {
 
 <template>
   <div class="flex h-screen overflow-hidden bg-[var(--bg-primary)]">
-    <Sidebar />
-    <main class="flex-1 overflow-auto p-6" style="margin-left: var(--sidebar-width)">
+    <!-- Mobile hamburger -->
+    <button
+      class="fixed top-3 left-3 z-50 md:hidden glass-btn !p-2 !rounded-lg"
+      @click="mobileMenuOpen = !mobileMenuOpen"
+    >
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path v-if="!mobileMenuOpen" d="M3 5h14M3 10h14M3 15h14" />
+        <path v-else d="M5 5l10 10M15 5L5 15" />
+      </svg>
+    </button>
+
+    <!-- Mobile overlay -->
+    <div
+      v-if="mobileMenuOpen"
+      class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm md:hidden"
+      @click="mobileMenuOpen = false"
+    />
+
+    <Sidebar :mobile-open="mobileMenuOpen" @close-mobile="mobileMenuOpen = false" />
+    <main class="flex-1 overflow-auto p-6 max-md:p-4 max-md:pt-14" style="margin-left: var(--sidebar-width)">
       <!-- Backend connection banner -->
       <div
         v-if="backendState.status === 'offline'"
@@ -75,7 +94,20 @@ onUnmounted(() => {
         <span class="inline-block w-2 h-2 rounded-full bg-[var(--info)] animate-pulse" />
         Connecting to backend...
       </div>
-      <RouterView />
+      <RouterView v-slot="{ Component }">
+        <Transition name="page" mode="out-in">
+          <component :is="Component" />
+        </Transition>
+      </RouterView>
     </main>
   </div>
 </template>
+
+<style>
+/* Mobile: override sidebar margin */
+@media (max-width: 767px) {
+  main {
+    margin-left: 0 !important;
+  }
+}
+</style>

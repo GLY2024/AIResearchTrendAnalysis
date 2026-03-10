@@ -6,29 +6,8 @@ import { useSessionStore } from '@/stores/session'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import GlassCard from '@/components/common/GlassCard.vue'
 import StreamingText from '@/components/chat/StreamingText.vue'
-
-import VChart from 'vue-echarts'
-import { use } from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart, LineChart, PieChart, GraphChart } from 'echarts/charts'
-import {
-  TitleComponent,
-  TooltipComponent,
-  LegendComponent,
-  GridComponent,
-} from 'echarts/components'
-
-use([
-  CanvasRenderer,
-  BarChart,
-  LineChart,
-  PieChart,
-  GraphChart,
-  TitleComponent,
-  TooltipComponent,
-  LegendComponent,
-  GridComponent,
-])
+import ChartContainer from '@/components/common/ChartContainer.vue'
+import SkeletonCard from '@/components/common/SkeletonCard.vue'
 
 const sessionStore = useSessionStore()
 const backendState = useBackendState()
@@ -72,7 +51,6 @@ async function generateReport(parentId?: number) {
     })
     reports.value.unshift(report)
     selectedReport.value = report
-    // Poll for completion
     pollForCompletion(report.id)
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : 'Failed to generate the report.'
@@ -83,7 +61,7 @@ async function generateReport(parentId?: number) {
 }
 
 async function pollForCompletion(reportId: number) {
-  const maxAttempts = 120  // 10 minutes max
+  const maxAttempts = 120
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise(r => setTimeout(r, 5000))
     try {
@@ -102,8 +80,11 @@ function selectReport(report: Report) {
   selectedReport.value = report
 }
 
-function chartTheme(option: Record<string, unknown>) {
-  return { backgroundColor: 'transparent', textStyle: { color: '#94a3b8' }, ...option }
+function wordCount(text: string | null | undefined): string {
+  if (!text) return '0'
+  const count = text.split(/\s+/).filter(Boolean).length
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`
+  return String(count)
 }
 
 function downloadExport(format: 'ris' | 'bibtex') {
@@ -140,11 +121,11 @@ onMounted(loadReports)
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-xl font-semibold text-[var(--text-primary)]">Report</h1>
-        <p class="text-sm text-[var(--text-secondary)]">
+        <p class="text-sm text-[var(--text-secondary)] mt-1">
           Generate and view research trend reports.
         </p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-3">
         <button
           class="glass-btn"
           :disabled="!sessionStore.currentSession || backendState.status !== 'online'"
@@ -174,7 +155,14 @@ onMounted(loadReports)
       >
         {{ actionError }}
       </div>
-      <div v-if="loading" class="text-[var(--text-muted)]">Loading reports...</div>
+
+      <!-- Loading skeleton -->
+      <div v-if="loading" class="flex gap-6">
+        <div class="w-56 shrink-0 space-y-2">
+          <SkeletonCard v-for="i in 3" :key="i" height="80px" :lines="2" />
+        </div>
+        <SkeletonCard class="flex-1" height="400px" :lines="8" />
+      </div>
 
       <div v-else-if="reports.length === 0" class="text-[var(--text-muted)]">
         No reports yet. Click "Generate Report" to create one.
@@ -193,7 +181,7 @@ onMounted(loadReports)
             <div class="text-sm font-medium text-[var(--text-primary)] truncate">
               {{ report.title || `Report v${report.version}` }}
             </div>
-            <div class="flex items-center justify-between mt-1">
+            <div class="flex items-center justify-between mt-1.5">
               <span :class="['badge text-[10px]', statusBadge[report.status]]">
                 {{ report.status }}
               </span>
@@ -201,15 +189,16 @@ onMounted(loadReports)
                 v{{ report.version }}
               </span>
             </div>
-            <div class="text-[10px] text-[var(--text-muted)] mt-1">
-              {{ new Date(report.created_at).toLocaleDateString() }}
+            <div class="flex items-center justify-between mt-1.5 text-[10px] text-[var(--text-muted)]">
+              <span>{{ new Date(report.created_at).toLocaleDateString() }}</span>
+              <span>{{ wordCount(report.content_markdown) }} words</span>
             </div>
           </div>
         </div>
 
         <!-- Report content -->
         <GlassCard v-if="selectedReport" class="flex-1 min-w-0">
-          <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center justify-between mb-5">
             <h2 class="text-lg font-semibold text-[var(--text-primary)]">
               {{ selectedReport.title || `Report v${selectedReport.version}` }}
             </h2>
@@ -224,9 +213,12 @@ onMounted(loadReports)
           </div>
 
           <!-- Generating state -->
-          <div v-if="selectedReport.status === 'generating'" class="flex items-center gap-3 text-[var(--text-secondary)]">
-            <span class="inline-block w-4 h-4 rounded-full border-2 border-white/20 border-t-[var(--accent-primary)] animate-spin" />
-            Generating report... This may take a minute.
+          <div v-if="selectedReport.status === 'generating'" class="space-y-3">
+            <div class="streaming-bar w-full" />
+            <div class="flex items-center gap-3 text-[var(--text-secondary)]">
+              <span class="inline-block w-4 h-4 rounded-full border-2 border-white/20 border-t-[var(--accent-primary)] animate-spin" />
+              Generating report... This may take a minute.
+            </div>
           </div>
 
           <!-- Failed state -->
@@ -234,9 +226,9 @@ onMounted(loadReports)
             {{ selectedReport.content_markdown || 'Report generation failed.' }}
           </div>
 
-          <!-- Markdown content -->
+          <!-- Markdown content + charts -->
           <template v-else>
-            <div class="report-content">
+            <div class="md-content">
               <StreamingText
                 :text="selectedReport.content_markdown || ''"
                 :is-streaming="false"
@@ -247,16 +239,15 @@ onMounted(loadReports)
             <template v-for="(chartGroup, gi) in selectedReport.chart_configs" :key="gi">
               <div
                 v-if="Array.isArray(chartGroup) && chartGroup.length"
-                class="grid grid-cols-1 lg:grid-cols-2 gap-4 my-4"
+                class="grid grid-cols-1 lg:grid-cols-2 gap-5 my-6"
               >
-                <div v-for="chart in chartGroup" :key="chart.id" class="glass-card p-4">
-                  <h4 class="text-sm font-medium text-[var(--text-primary)] mb-2">{{ chart.title }}</h4>
-                  <VChart
-                    :option="chartTheme(chart.option)"
-                    class="w-full h-64"
-                    autoresize
-                  />
-                </div>
+                <ChartContainer
+                  v-for="chart in chartGroup"
+                  :key="chart.id"
+                  :option="chart.option"
+                  :title="chart.title"
+                  height="400px"
+                />
               </div>
             </template>
           </template>
@@ -289,24 +280,3 @@ onMounted(loadReports)
     </Teleport>
   </div>
 </template>
-
-<style scoped>
-.report-content :deep(h1),
-.report-content :deep(h2),
-.report-content :deep(h3) {
-  color: var(--text-primary);
-  margin-top: 1.5em;
-  margin-bottom: 0.5em;
-}
-.report-content :deep(h1) { font-size: 1.25rem; font-weight: 700; }
-.report-content :deep(h2) { font-size: 1.1rem; font-weight: 600; }
-.report-content :deep(h3) { font-size: 1rem; font-weight: 600; }
-.report-content :deep(ul),
-.report-content :deep(ol) {
-  padding-left: 1.5em;
-  margin: 0.5em 0;
-}
-.report-content :deep(li) {
-  margin: 0.25em 0;
-}
-</style>

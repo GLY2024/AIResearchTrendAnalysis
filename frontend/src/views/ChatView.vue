@@ -24,6 +24,12 @@ const needsApiKey = ref(false)
 // WebSocket connection - reactive to session changes
 let ws: ReturnType<typeof useWebSocket> | null = null
 
+const suggestedTopics = [
+  'What are the latest trends in large language models?',
+  'Help me understand transformer architectures',
+  'Summarize key papers on federated learning',
+]
+
 function setupWebSocket() {
   if (ws) ws.disconnect()
   if (!sessionStore.currentSession) return
@@ -40,7 +46,6 @@ function setupWebSocket() {
   ws.on('chat_complete', (data: Record<string, unknown>) => {
     const msg = data.message as ChatMessageType
     if (msg) {
-      // Replace streaming content with final message
       messages.value.push(msg)
     }
     streaming.value = false
@@ -54,7 +59,6 @@ function setupWebSocket() {
 
   ws.on('plan_generated', (data: Record<string, unknown>) => {
     planGenerating.value = false
-    // Add a system-like message about the plan
     messages.value.push({
       id: Date.now(),
       session_id: sessionStore.currentSession!.id,
@@ -77,7 +81,6 @@ function setupWebSocket() {
     }
 
     if (streamingContent.value) {
-      // Save whatever was streamed
       messages.value.push({
         id: Date.now(),
         session_id: sessionStore.currentSession!.id,
@@ -124,10 +127,8 @@ async function handleSend(content: string) {
     return
   }
 
-  // Check if this is a plan generation command
   const planCmd = content.match(/^\/plan\s+(.+)/i)
 
-  // Optimistic user message
   const userMsg: ChatMessageType = {
     id: Date.now(),
     session_id: sessionStore.currentSession.id,
@@ -140,7 +141,6 @@ async function handleSend(content: string) {
   scrollToBottom()
 
   if (planCmd && ws?.connected.value) {
-    // Generate search plan via WebSocket
     ws.send('generate_plan', { topic: planCmd[1] })
     return
   } else if (planCmd) {
@@ -149,7 +149,6 @@ async function handleSend(content: string) {
     return
   }
 
-  // Send via WebSocket for streaming
   if (ws && ws.connected.value) {
     loading.value = true
     streamingContent.value = ''
@@ -159,7 +158,6 @@ async function handleSend(content: string) {
       await checkBackend(true)
     }
   } else {
-    // Fallback to REST
     loading.value = true
     try {
       const reply = await chatApi.send({
@@ -250,15 +248,37 @@ onUnmounted(() => {
 
     <!-- Chat area -->
     <template v-else>
-      <!-- API key missing prompt -->
+      <!-- API key missing - step guide card -->
       <div
         v-if="needsApiKey"
-        class="mb-4 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-primary)]/10 px-5 py-4"
+        class="mb-4 glass-card p-6"
       >
-        <p class="text-sm font-medium text-[var(--text-primary)] mb-2">API Key Required</p>
-        <p class="text-sm text-[var(--text-secondary)] mb-3">{{ actionError }}</p>
+        <h3 class="text-base font-semibold text-[var(--text-primary)] mb-4">Get Started with ARTA</h3>
+        <div class="space-y-3">
+          <div class="flex items-start gap-3">
+            <span class="flex items-center justify-center w-6 h-6 rounded-full bg-[var(--accent-primary)] text-white text-xs font-bold shrink-0">1</span>
+            <div>
+              <p class="text-sm font-medium text-[var(--text-primary)]">Configure an API Key</p>
+              <p class="text-xs text-[var(--text-muted)]">Add your OpenAI, Anthropic, or OpenRouter key in Settings.</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3">
+            <span class="flex items-center justify-center w-6 h-6 rounded-full bg-[var(--glass-border)] text-[var(--text-muted)] text-xs font-bold shrink-0">2</span>
+            <div>
+              <p class="text-sm font-medium text-[var(--text-secondary)]">Select Models</p>
+              <p class="text-xs text-[var(--text-muted)]">Choose which model to use for each role (chat, planner, etc.).</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3">
+            <span class="flex items-center justify-center w-6 h-6 rounded-full bg-[var(--glass-border)] text-[var(--text-muted)] text-xs font-bold shrink-0">3</span>
+            <div>
+              <p class="text-sm font-medium text-[var(--text-secondary)]">Start Researching</p>
+              <p class="text-xs text-[var(--text-muted)]">Chat about your topic, generate search plans, and analyze papers.</p>
+            </div>
+          </div>
+        </div>
         <button
-          class="glass-btn glass-btn-primary text-sm"
+          class="glass-btn glass-btn-primary text-sm mt-4"
           @click="router.push('/settings'); needsApiKey = false; actionError = ''"
         >
           Go to Settings
@@ -274,12 +294,38 @@ onUnmounted(() => {
         ref="scrollContainer"
         class="flex-1 overflow-y-auto space-y-4 pr-2 pb-4"
       >
+        <!-- Empty state welcome card -->
         <div
           v-if="messages.length === 0 && !loading && !streaming"
-          class="flex flex-col items-center justify-center h-full text-[var(--text-muted)] gap-2"
+          class="flex flex-col items-center justify-center h-full"
         >
-          <p>Send a message to discuss your research topic.</p>
-          <p class="text-xs">Tip: Use <code class="px-1 py-0.5 rounded bg-white/5">/plan [topic]</code> to directly generate a search plan.</p>
+          <div class="glass-card p-8 max-w-md text-center">
+            <div class="w-14 h-14 rounded-2xl bg-[var(--accent-primary)]/20 flex items-center justify-center mx-auto mb-4">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" stroke-width="1.5" stroke-linecap="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </div>
+            <h2 class="text-lg font-semibold text-[var(--text-primary)] mb-2">Welcome to ARTA Chat</h2>
+            <p class="text-sm text-[var(--text-secondary)] mb-5">
+              Discuss your research topic, ask questions, or generate a search plan.
+            </p>
+            <!-- Suggested topics -->
+            <div class="space-y-2">
+              <button
+                v-for="topic in suggestedTopics"
+                :key="topic"
+                class="w-full text-left glass-btn text-xs py-2.5 px-4"
+                @click="handleSend(topic)"
+              >
+                {{ topic }}
+              </button>
+            </div>
+            <div class="mt-4 pt-3 border-t border-white/10">
+              <p class="text-xs text-[var(--text-muted)]">
+                Use <code class="px-1 py-0.5 rounded bg-white/5 text-[var(--accent-primary)]">/plan [topic]</code> to generate a search plan directly.
+              </p>
+            </div>
+          </div>
         </div>
         <ChatMessage
           v-for="msg in messages"
@@ -298,22 +344,20 @@ onUnmounted(() => {
           }"
           :is-streaming="true"
         />
-        <!-- Loading indicator -->
+        <!-- Loading indicator - gradient pulse bar -->
         <div v-if="loading && !streaming" class="flex justify-start">
           <div class="glass-card rounded-2xl rounded-bl-sm px-4 py-3 max-w-[75%]">
-            <div class="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-              <span class="inline-block w-2 h-2 rounded-full bg-[var(--accent-primary)] animate-pulse" />
-              ARTA is thinking...
-            </div>
+            <div class="text-xs font-semibold mb-1.5" style="color: var(--accent-secondary)">ARTA</div>
+            <div class="streaming-bar w-48 mb-2" />
+            <div class="text-xs text-[var(--text-muted)]">Thinking...</div>
           </div>
         </div>
         <!-- Plan generating indicator -->
         <div v-if="planGenerating" class="flex justify-start">
           <div class="glass-card rounded-2xl rounded-bl-sm px-4 py-3 max-w-[75%]">
-            <div class="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-              <span class="inline-block w-2 h-2 rounded-full bg-[var(--accent-secondary)] animate-pulse" />
-              Generating search plan...
-            </div>
+            <div class="text-xs font-semibold mb-1.5" style="color: var(--accent-secondary)">ARTA</div>
+            <div class="streaming-bar w-48 mb-2" />
+            <div class="text-xs text-[var(--text-muted)]">Generating search plan...</div>
           </div>
         </div>
       </div>

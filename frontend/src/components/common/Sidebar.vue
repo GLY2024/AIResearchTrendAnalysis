@@ -1,23 +1,31 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 
 const router = useRouter()
+const route = useRoute()
 const sessionStore = useSessionStore()
 const backendState = useBackendState()
 const hoveredSession = ref<number | null>(null)
 const confirmDeleteId = ref<number | null>(null)
 const actionError = ref('')
 
+defineProps<{
+  mobileOpen?: boolean
+}>()
+const emit = defineEmits<{
+  closeMobile: []
+}>()
+
 const navLinks = [
-  { label: 'Chat', path: '/chat', icon: '💬' },
-  { label: 'Search Plan', path: '/plan', icon: '🔍' },
-  { label: 'Library', path: '/library', icon: '📚' },
-  { label: 'Analysis', path: '/analysis', icon: '📊' },
-  { label: 'Report', path: '/report', icon: '📄' },
-  { label: 'Settings', path: '/settings', icon: '⚙️' },
+  { label: 'Chat', path: '/chat', icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' },
+  { label: 'Search Plan', path: '/plan', icon: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-4.35-4.35' },
+  { label: 'Library', path: '/library', icon: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z' },
+  { label: 'Analysis', path: '/analysis', icon: 'M18 20V10M12 20V4M6 20v-6' },
+  { label: 'Report', path: '/report', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8' },
+  { label: 'Settings', path: '/settings', icon: 'M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z' },
 ]
 
 async function handleNewSession() {
@@ -30,6 +38,7 @@ async function handleNewSession() {
   try {
     await sessionStore.createSession('New Session')
     router.push('/chat')
+    emit('closeMobile')
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : 'Failed to create session.'
     await checkBackend(true)
@@ -48,15 +57,33 @@ async function handleDeleteSession(id: number) {
     }
   } else {
     confirmDeleteId.value = id
-    // Auto-reset after 3s
     setTimeout(() => { if (confirmDeleteId.value === id) confirmDeleteId.value = null }, 3000)
   }
+}
+
+function handleNavClick() {
+  emit('closeMobile')
+}
+
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr)
+  const now = new Date()
+  const diffMs = now.getTime() - d.getTime()
+  const diffMin = Math.floor(diffMs / 60000)
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr < 24) return `${diffHr}h ago`
+  return d.toLocaleDateString()
 }
 </script>
 
 <template>
   <aside
-    class="fixed top-0 left-0 h-screen flex flex-col bg-[var(--bg-secondary)] border-r border-white/10 z-40"
+    class="fixed top-0 left-0 h-screen flex flex-col bg-[var(--bg-secondary)] border-r border-white/10 z-40 transition-transform duration-200"
+    :class="[
+      'max-md:-translate-x-full',
+      mobileOpen ? 'max-md:translate-x-0' : '',
+    ]"
     style="width: var(--sidebar-width)"
   >
     <!-- Logo -->
@@ -74,7 +101,9 @@ async function handleDeleteSession(id: number) {
         :disabled="backendState.status !== 'online'"
         @click="handleNewSession"
       >
-        <span class="text-lg leading-none">+</span>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M8 3v10M3 8h10" />
+        </svg>
         New Session
       </button>
       <p v-if="actionError" class="mt-2 text-xs text-[var(--error)]">
@@ -102,9 +131,13 @@ async function handleDeleteSession(id: number) {
                 ? 'bg-[var(--glass-active)] text-[var(--text-primary)]'
                 : 'text-[var(--text-secondary)] hover:bg-[var(--glass-bg)] hover:text-[var(--text-primary)]'
             "
-            @click="sessionStore.setCurrentSession(session.id)"
+            @click="sessionStore.setCurrentSession(session.id); handleNavClick()"
           >
-            {{ session.title }}
+            <div class="truncate">{{ session.title }}</div>
+            <div class="text-[10px] text-[var(--text-muted)] mt-0.5 flex items-center gap-2">
+              <span v-if="(session as any).paper_count != null">{{ (session as any).paper_count }} papers</span>
+              <span>{{ formatDate(session.updated_at || session.created_at) }}</span>
+            </div>
           </button>
           <!-- Delete button -->
           <button
@@ -116,7 +149,9 @@ async function handleDeleteSession(id: number) {
             :title="confirmDeleteId === session.id ? 'Click again to confirm' : 'Delete session'"
             @click.stop="handleDeleteSession(session.id)"
           >
-            ✕
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
           </button>
         </li>
       </ul>
@@ -136,8 +171,11 @@ async function handleDeleteSession(id: number) {
             :to="link.path"
             class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-[var(--text-secondary)] hover:bg-[var(--glass-bg)] hover:text-[var(--text-primary)]"
             active-class="!bg-[var(--glass-active)] !text-[var(--text-primary)]"
+            @click="handleNavClick"
           >
-            <span class="text-base leading-none">{{ link.icon }}</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+              <path :d="link.icon" />
+            </svg>
             {{ link.label }}
           </router-link>
         </li>

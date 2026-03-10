@@ -166,3 +166,94 @@ body {
 .badge-warning { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
 .badge-error { background: rgba(239, 68, 68, 0.15); color: var(--error); }
 .badge-info { background: rgba(59, 130, 246, 0.15); color: var(--info); }
+
+/* ==================== Markdown Content ==================== */
+.md-content .md-heading { color: var(--text-primary); margin-bottom: 0.5em; }
+.md-content .md-h1 { font-size: 1.5rem; font-weight: 700; margin-top: 1.5em; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.3em; }
+.md-content .md-h2 { font-size: 1.25rem; font-weight: 650; margin-top: 1.4em; }
+.md-content .md-h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1.2em; }
+.md-content .md-h4 { font-size: 1rem; font-weight: 600; margin-top: 1em; }
+.md-content .md-h5 { font-size: 0.9rem; font-weight: 600; margin-top: 0.8em; }
+.md-content .md-h6 { font-size: 0.85rem; font-weight: 600; margin-top: 0.8em; color: var(--text-secondary); }
+
+.md-content p { margin: 0.75em 0; line-height: 1.7; }
+.md-content ul, .md-content ol { padding-left: 1.75em; margin: 0.6em 0; color: var(--text-secondary); }
+.md-content ul { list-style-type: disc; }
+.md-content ol { list-style-type: decimal; }
+.md-content li { margin: 0.3em 0; line-height: 1.6; }
+.md-content li > p { margin: 0.25em 0; }
+
+.md-content .md-link {
+  color: var(--accent-primary);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+.md-content .md-link:hover {
+  color: var(--accent-secondary);
+  text-decoration: underline;
+}
+
+.md-content .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.875rem;
+}
+.md-content .md-table th {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.md-content .md-table td {
+  border: 1px solid var(--glass-border);
+  padding: 8px 12px;
+  color: var(--text-secondary);
+}
+.md-content .md-table tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.md-content .md-blockquote {
+  border-left: 3px solid var(--accent-secondary);
+  background: rgba(139, 92, 246, 0.06);
+  padding: 0.75em 1em;
+  margin: 0.75em 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-secondary);
+}
+
+.md-content .md-hr {
+  border: none;
+  border-top: 1px solid var(--glass-border);
+  margin: 1.5em 0;
+}
+
+/* ==================== Page Transitions ==================== */
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* ==================== Streaming Indicator ==================== */
+.streaming-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary), var(--accent-primary));
+  background-size: 200% 100%;
+  animation: streaming-flow 1.5s linear infinite;
+}
+@keyframes streaming-flow {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

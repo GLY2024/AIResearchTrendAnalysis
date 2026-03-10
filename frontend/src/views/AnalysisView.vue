@@ -5,32 +5,9 @@ import { analysisApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import GlassCard from '@/components/common/GlassCard.vue'
-
-import VChart from 'vue-echarts'
-import { use } from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart, LineChart, PieChart, ScatterChart, GraphChart } from 'echarts/charts'
-import {
-  TitleComponent,
-  TooltipComponent,
-  LegendComponent,
-  GridComponent,
-  DataZoomComponent,
-} from 'echarts/components'
-
-use([
-  CanvasRenderer,
-  BarChart,
-  LineChart,
-  PieChart,
-  ScatterChart,
-  GraphChart,
-  TitleComponent,
-  TooltipComponent,
-  LegendComponent,
-  GridComponent,
-  DataZoomComponent,
-])
+import ChartContainer from '@/components/common/ChartContainer.vue'
+import StreamingText from '@/components/chat/StreamingText.vue'
+import SkeletonCard from '@/components/common/SkeletonCard.vue'
 
 const sessionStore = useSessionStore()
 const backendState = useBackendState()
@@ -40,11 +17,11 @@ const running = ref<string | null>(null)
 const actionError = ref('')
 
 const analysisTypes = [
-  { key: 'bibliometrics', label: 'Bibliometrics', description: 'H-index, citations, top authors, journals' },
-  { key: 'trend', label: 'Trend Analysis', description: 'Publication & citation trends over time' },
-  { key: 'network', label: 'Keyword Network', description: 'Keyword co-occurrence network' },
-  { key: 'coauthor', label: 'Co-authorship', description: 'Author collaboration network' },
-  { key: 'topic_modeling', label: 'Topic Modeling', description: 'Discover research themes' },
+  { key: 'bibliometrics', label: 'Bibliometrics', description: 'H-index, citations, top authors, journals', icon: '📈' },
+  { key: 'trend', label: 'Trend Analysis', description: 'Publication & citation trends over time', icon: '📊' },
+  { key: 'network', label: 'Keyword Network', description: 'Keyword co-occurrence network', icon: '🔗' },
+  { key: 'coauthor', label: 'Co-authorship', description: 'Author collaboration network', icon: '👥' },
+  { key: 'topic_modeling', label: 'Topic Modeling', description: 'Discover research themes', icon: '🧠' },
 ] as const
 
 async function loadRuns() {
@@ -75,7 +52,6 @@ async function runAnalysis(type: string) {
       analysis_type: type,
     })
     runs.value.unshift(result)
-    // Poll for completion since it runs as background task
     pollForCompletion(result.id)
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : 'Failed to start analysis.'
@@ -86,7 +62,7 @@ async function runAnalysis(type: string) {
 }
 
 async function pollForCompletion(runId: number) {
-  const maxAttempts = 60  // 5 minutes max
+  const maxAttempts = 60
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise(r => setTimeout(r, 5000))
     try {
@@ -98,12 +74,8 @@ async function pollForCompletion(runId: number) {
   }
 }
 
-function chartTheme(option: Record<string, unknown>) {
-  return {
-    backgroundColor: 'transparent',
-    textStyle: { color: '#94a3b8' },
-    ...option,
-  }
+function getLatestRun(type: string) {
+  return runs.value.find(r => r.analysis_type === type)
 }
 
 const statusBadge: Record<string, string> = {
@@ -135,30 +107,56 @@ onMounted(loadRuns)
       >
         {{ actionError }}
       </div>
-      <!-- Action buttons -->
-      <div class="flex flex-wrap gap-3 mb-6">
-        <button
+
+      <!-- Analysis type cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+        <div
           v-for="t in analysisTypes"
           :key="t.key"
-          class="glass-btn glass-btn-primary"
-          :disabled="running !== null || backendState.status !== 'online'"
-          @click="runAnalysis(t.key)"
+          class="glass-card p-4 flex flex-col"
         >
-          <span v-if="running === t.key" class="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin mr-2" />
-          {{ t.label }}
-        </button>
+          <div class="flex items-start gap-3 mb-3">
+            <span class="text-2xl leading-none">{{ t.icon }}</span>
+            <div class="flex-1 min-w-0">
+              <h3 class="text-sm font-semibold text-[var(--text-primary)]">{{ t.label }}</h3>
+              <p class="text-xs text-[var(--text-muted)] mt-0.5 leading-relaxed">{{ t.description }}</p>
+            </div>
+          </div>
+          <!-- Latest run status -->
+          <div v-if="getLatestRun(t.key)" class="mb-3">
+            <span :class="['badge text-[10px]', statusBadge[getLatestRun(t.key)!.status]]">
+              {{ getLatestRun(t.key)!.status }}
+            </span>
+            <span class="text-[10px] text-[var(--text-muted)] ml-2">
+              {{ new Date(getLatestRun(t.key)!.created_at).toLocaleString() }}
+            </span>
+          </div>
+          <div class="mt-auto">
+            <button
+              class="glass-btn glass-btn-primary text-xs w-full"
+              :disabled="running !== null || backendState.status !== 'online'"
+              @click="runAnalysis(t.key)"
+            >
+              <span v-if="running === t.key" class="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin mr-1.5" />
+              {{ running === t.key ? 'Running...' : 'Run' }}
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div v-if="loading" class="text-[var(--text-muted)]">Loading analyses...</div>
+      <!-- Loading -->
+      <div v-if="loading" class="space-y-4">
+        <SkeletonCard v-for="i in 2" :key="i" height="300px" :lines="5" />
+      </div>
 
       <!-- Results -->
       <div v-else class="space-y-6">
         <div v-if="runs.length === 0" class="text-[var(--text-muted)]">
-          No analyses yet. Click a button above to run one.
+          No analyses yet. Select a type above to run one.
         </div>
 
         <GlassCard v-for="run in runs" :key="run.id">
-          <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center justify-between mb-4">
             <div>
               <span class="font-medium text-[var(--text-primary)] capitalize">
                 {{ run.analysis_type.replace('_', ' ') }}
@@ -172,31 +170,32 @@ onMounted(loadRuns)
             </span>
           </div>
 
+          <!-- Running indicator -->
+          <div v-if="run.status === 'running' || run.status === 'pending'" class="streaming-bar w-full mb-4" />
+
           <!-- Charts -->
           <div
             v-if="run.chart_configs && run.chart_configs.length"
-            class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4"
+            class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-4"
           >
-            <div
+            <ChartContainer
               v-for="chart in run.chart_configs"
               :key="chart.id"
-              class="glass-card p-4"
-            >
-              <h4 class="text-sm font-medium text-[var(--text-primary)] mb-2">{{ chart.title }}</h4>
-              <VChart
-                :option="chartTheme(chart.option)"
-                class="w-full h-64"
-                autoresize
-              />
-            </div>
+              :option="chart.option"
+              :title="chart.title"
+              :height="(['network', 'coauthor'].includes(run.analysis_type)) ? '500px' : '400px'"
+            />
           </div>
 
-          <!-- AI Interpretation -->
-          <div v-if="run.ai_interpretation" class="mt-3">
-            <h4 class="text-xs text-[var(--text-muted)] mb-1">AI Interpretation</h4>
-            <p class="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">
-              {{ run.ai_interpretation }}
-            </p>
+          <!-- AI Interpretation with markdown -->
+          <div v-if="run.ai_interpretation" class="mt-4 glass-card p-4">
+            <h4 class="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-2">AI Interpretation</h4>
+            <div class="md-content">
+              <StreamingText
+                :text="run.ai_interpretation"
+                :is-streaming="false"
+              />
+            </div>
           </div>
         </GlassCard>
       </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch, nextTick } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { settingsApi } from '@/composables/useApi'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 
@@ -26,6 +26,7 @@ interface ProviderState {
   testResult: { ok: boolean; message: string } | null
   saving: boolean
   dirty: boolean
+  collapsed: boolean
 }
 
 interface ModelRole {
@@ -33,13 +34,13 @@ interface ModelRole {
   label: string
   description: string
   value: string
-  provider: string       // 'openai' | 'anthropic' | ''
+  provider: string
   saving: boolean
   dirty: boolean
   modelOptions: { id: string; name: string }[]
   loadingModels: boolean
   modelError: string
-  showCustom: boolean    // toggle for custom model input
+  showCustom: boolean
 }
 
 // --- Provider definitions ---
@@ -81,6 +82,7 @@ for (const p of providers) {
     testResult: null,
     saving: false,
     dirty: false,
+    collapsed: false,
   }
 }
 
@@ -103,6 +105,7 @@ const extraKeys = ref<{ key: string; label: string; value: string; saving: boole
 const loaded = ref(false)
 const backendState = useBackendState()
 const pageError = ref('')
+const showOnboarding = ref(false)
 
 function providerState(providerId: string): ProviderState {
   return providerStates[providerId]!
@@ -115,11 +118,12 @@ async function loadSettings() {
     const settings = await settingsApi.list()
     const map = new Map(settings.map((s: { key: string; value: string }) => [s.key, s.value]))
 
+    let hasAnyKey = false
     for (const p of providers) {
       const state = providerState(p.id)
       const key = map.get(p.fields.apiKey)
       const url = map.get(p.fields.baseUrl)
-      if (key) { state.apiKey = key; state.enabled = true }
+      if (key) { state.apiKey = key; state.enabled = true; hasAnyKey = true; state.collapsed = true }
       if (url) state.baseUrl = url
     }
 
@@ -134,6 +138,8 @@ async function loadSettings() {
       const v = map.get(ek.key)
       if (v) ek.value = v
     }
+
+    showOnboarding.value = !hasAnyKey
   } catch (err) {
     console.error('[ARTA:Settings] Failed to load settings:', err)
     pageError.value = err instanceof Error ? err.message : 'Failed to load settings.'
@@ -154,14 +160,13 @@ async function saveProvider(providerId: string) {
 
   state.saving = true
   try {
-    // Save API key
     if (state.apiKey && !state.apiKey.includes('***')) {
       await settingsApi.update({ key: p.fields.apiKey, value: state.apiKey, is_sensitive: true })
     }
-    // Save base URL
     await settingsApi.update({ key: p.fields.baseUrl, value: state.baseUrl })
     state.dirty = false
     state.enabled = true
+    showOnboarding.value = false
     console.log(`[ARTA:Settings] Saved provider ${providerId}`)
   } catch (err) {
     console.error(`[ARTA:Settings] Failed to save provider ${providerId}:`, err)
@@ -221,7 +226,6 @@ async function saveModelRole(role: ModelRole) {
   }
   role.saving = true
   try {
-    // Save model name and provider in parallel
     await Promise.all([
       settingsApi.update({ key: role.key, value: role.value }),
       settingsApi.update({ key: `${role.key}_provider`, value: role.provider }),
@@ -234,6 +238,17 @@ async function saveModelRole(role: ModelRole) {
     await checkBackend(true)
   } finally {
     role.saving = false
+  }
+}
+
+// Apply same model to all roles
+function applyToAllRoles() {
+  const first = modelRoles.value[0]!
+  if (!first?.provider || !first?.value) return
+  for (const role of modelRoles.value.slice(1)) {
+    role.provider = first.provider
+    role.value = first.value
+    role.dirty = true
   }
 }
 
@@ -292,6 +307,33 @@ onMounted(loadSettings)
     <p class="text-sm text-[var(--text-secondary)] mb-6">
       Configure LLM providers, model assignments, and API keys.
     </p>
+
+    <!-- Onboarding banner -->
+    <div
+      v-if="showOnboarding"
+      class="mb-6 glass-card p-5 border-[var(--accent-primary)]/30"
+    >
+      <div class="flex items-start gap-4">
+        <div class="w-10 h-10 rounded-xl bg-[var(--accent-primary)]/20 flex items-center justify-center shrink-0">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" stroke-width="2" stroke-linecap="round">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+          </svg>
+        </div>
+        <div class="flex-1">
+          <h3 class="text-sm font-semibold text-[var(--text-primary)] mb-1">Welcome to ARTA!</h3>
+          <p class="text-xs text-[var(--text-secondary)] mb-3">
+            To get started, configure at least one LLM provider below. You'll need an API key from
+            <a href="https://platform.openai.com/api-keys" target="_blank" class="text-[var(--accent-primary)] hover:underline">OpenAI</a>,
+            <a href="https://console.anthropic.com/" target="_blank" class="text-[var(--accent-primary)] hover:underline">Anthropic</a>, or
+            <a href="https://openrouter.ai/keys" target="_blank" class="text-[var(--accent-primary)] hover:underline">OpenRouter</a>.
+          </p>
+          <button class="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]" @click="showOnboarding = false">
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div
       v-if="pageError"
       class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
@@ -321,7 +363,11 @@ onMounted(loadSettings)
               : 'border-[var(--glass-border)] bg-[var(--glass-bg)]'"
           >
             <!-- Provider header -->
-            <div class="flex items-center gap-3 px-5 py-4 border-b border-white/5">
+            <div
+              class="flex items-center gap-3 px-5 py-4 cursor-pointer"
+              :class="providerState(p.id).enabled ? 'border-b border-white/5' : ''"
+              @click="providerState(p.id).collapsed = !providerState(p.id).collapsed"
+            >
               <span class="text-2xl">{{ p.icon }}</span>
               <div class="flex-1">
                 <div class="flex items-center gap-2">
@@ -335,10 +381,17 @@ onMounted(loadSettings)
                 </div>
                 <p class="text-xs text-[var(--text-muted)] mt-0.5">{{ p.description }}</p>
               </div>
+              <svg
+                width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                class="text-[var(--text-muted)] transition-transform shrink-0"
+                :class="!providerState(p.id).collapsed ? 'rotate-180' : ''"
+              >
+                <path d="M4 6l4 4 4-4" />
+              </svg>
             </div>
 
-            <!-- Provider fields -->
-            <div class="px-5 py-4 space-y-3">
+            <!-- Provider fields (collapsible) -->
+            <div v-if="!providerState(p.id).collapsed" class="px-5 py-4 space-y-3">
               <!-- API Key -->
               <div>
                 <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">API Key</label>
@@ -410,20 +463,32 @@ onMounted(loadSettings)
 
       <!-- ==================== MODEL ROLES ==================== -->
       <section class="mb-8">
-        <h2 class="text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-1">
-          Model Assignments
-        </h2>
-        <p class="text-xs text-[var(--text-muted)] mb-3">
-          Select a provider and model for each role. Models are fetched from the provider's API.
-        </p>
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 class="text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-1">
+              Model Assignments
+            </h2>
+            <p class="text-xs text-[var(--text-muted)]">
+              Select a provider and model for each role. Models are fetched from the provider's API.
+            </p>
+          </div>
+          <button
+            v-if="modelRoles[0]?.provider && modelRoles[0]?.value"
+            class="glass-btn text-xs"
+            title="Use the Chat model for all roles"
+            @click="applyToAllRoles"
+          >
+            Use same for all
+          </button>
+        </div>
 
-        <div class="rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] divide-y divide-white/5">
+        <div class="space-y-3">
           <div
             v-for="role in modelRoles"
             :key="role.key"
-            class="px-5 py-3 space-y-2"
+            class="rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] px-5 py-4"
           >
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 flex-wrap">
               <!-- Role label -->
               <div class="w-24 shrink-0">
                 <span class="text-sm font-medium text-[var(--text-primary)]">{{ role.label }}</span>
@@ -447,7 +512,7 @@ onMounted(loadSettings)
               </select>
 
               <!-- Model select / custom input -->
-              <div class="flex-1 relative">
+              <div class="flex-1 relative min-w-[200px]">
                 <div v-if="role.loadingModels" class="glass-input text-sm text-[var(--text-muted)] flex items-center">
                   Loading models…
                 </div>
@@ -468,7 +533,6 @@ onMounted(loadSettings)
                       >
                         {{ m.id }}
                       </option>
-                      <!-- Keep current value visible if not in list -->
                       <option
                         v-if="role.value && !role.modelOptions.find(m => m.id === role.value)"
                         :value="role.value"
@@ -519,7 +583,7 @@ onMounted(loadSettings)
             <!-- Model fetch error -->
             <p
               v-if="role.modelError"
-              class="text-[10px] text-[var(--error)] pl-[6.5rem]"
+              class="text-[10px] text-[var(--error)] mt-1 pl-[6.5rem]"
             >
               {{ role.modelError }}
             </p>

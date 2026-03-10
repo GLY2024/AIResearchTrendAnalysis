@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { marked } from 'marked'
 
 const props = withDefaults(
   defineProps<{
@@ -11,54 +12,56 @@ const props = withDefaults(
   }
 )
 
-/**
- * Basic markdown-like rendering:
- * - **bold** -> <strong>
- * - `inline code` -> <code>
- * - ```code blocks``` -> <pre><code>
- */
-const renderedHtml = computed(() => {
-  let html = escapeHtml(props.text)
+// Custom renderer for glass theme classes
+const renderer = new marked.Renderer()
+renderer.heading = ({ text, depth }) => {
+  return `<h${depth} class="md-heading md-h${depth}">${text}</h${depth}>`
+}
+renderer.link = ({ href, text }) => {
+  return `<a href="${href}" class="md-link" target="_blank" rel="noopener">${text}</a>`
+}
+renderer.table = (token) => {
+  let headerHtml = ''
+  for (const cell of token.header) {
+    headerHtml += `<th${cell.align ? ` style="text-align:${cell.align}"` : ''}>${cell.text}</th>`
+  }
+  let bodyHtml = ''
+  for (const row of token.rows) {
+    let rowHtml = ''
+    for (const cell of row) {
+      rowHtml += `<td${cell.align ? ` style="text-align:${cell.align}"` : ''}>${cell.text}</td>`
+    }
+    bodyHtml += `<tr>${rowHtml}</tr>`
+  }
+  return `<table class="md-table"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>`
+}
+renderer.blockquote = ({ text }) => {
+  return `<blockquote class="md-blockquote">${text}</blockquote>`
+}
+renderer.code = ({ text, lang }) => {
+  return `<pre class="code-block"><code class="language-${lang || ''}">${text}</code></pre>`
+}
+renderer.codespan = ({ text }) => {
+  return `<code class="inline-code">${text}</code>`
+}
+renderer.hr = () => {
+  return `<hr class="md-hr" />`
+}
 
-  // Fenced code blocks: ```...```
-  html = html.replace(
-    /```(\w*)\n([\s\S]*?)```/g,
-    (_match, _lang, code) =>
-      `<pre class="code-block"><code>${code.trim()}</code></pre>`
-  )
-
-  // Inline code: `...`
-  html = html.replace(
-    /`([^`\n]+)`/g,
-    '<code class="inline-code">$1</code>'
-  )
-
-  // Bold: **...**
-  html = html.replace(
-    /\*\*([^*]+)\*\*/g,
-    '<strong>$1</strong>'
-  )
-
-  // Convert newlines to <br> (outside of pre blocks)
-  html = html.replace(/\n/g, '<br>')
-
-  return html
+marked.setOptions({
+  renderer,
+  breaks: true,
+  gfm: true,
 })
 
-function escapeHtml(text: string): string {
-  const map: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;',
-  }
-  return text.replace(/[&<>"']/g, (c) => map[c] ?? c)
-}
+const renderedHtml = computed(() => {
+  if (!props.text) return ''
+  return marked.parse(props.text) as string
+})
 </script>
 
 <template>
-  <div class="streaming-text text-sm leading-relaxed">
+  <div class="streaming-text md-content text-sm leading-relaxed">
     <span v-html="renderedHtml" />
     <span
       v-if="isStreaming"
