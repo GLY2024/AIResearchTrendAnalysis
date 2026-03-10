@@ -111,6 +111,10 @@ export const settingsApi = {
   delete: (key: string) => api.delete('/settings', { params: { key } }),
   validate: (data: { key: string; value: string; base_url?: string }) =>
     api.post<{ valid: boolean; message: string }>('/validate-key', data).then(r => r.data),
+  fetchModels: (provider: string) =>
+    api.get<{ models: { id: string; name: string }[]; error: string | null }>('/settings/models', {
+      params: { provider },
+    }).then(r => r.data),
 }
 
 // Export

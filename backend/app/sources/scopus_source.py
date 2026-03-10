@@ -1,7 +1,9 @@
-"""Scopus data source implementation using pybliometrics."""
+"""Scopus data source using Elsevier API, with pybliometrics config fallback."""
 
 import logging
 import os
+from configparser import ConfigParser
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -11,6 +13,57 @@ from app.sources.base import BaseDataSource, UnifiedPaper
 logger = logging.getLogger(__name__)
 
 SCOPUS_API = "https://api.elsevier.com/content"
+
+
+def _read_pybliometrics_key() -> str:
+    """Try to read Scopus API key from pybliometrics config file."""
+    # pybliometrics looks in these locations (in order):
+    candidates = [
+        Path.home() / ".config" / "pybliometrics.cfg",
+        Path.home() / ".pybliometrics" / "pybliometrics.cfg",
+        Path.home() / "pybliometrics.cfg",
+    ]
+    for cfg_path in candidates:
+        if cfg_path.exists():
+            try:
+                cp = ConfigParser()
+                cp.read(str(cfg_path))
+                key = cp.get("Authentication", "APIKey", fallback="")
+                if key:
+                    logger.info(f"Read Scopus API key from {cfg_path}")
+                    return key
+            except Exception as e:
+                logger.debug(f"Failed to read {cfg_path}: {e}")
+    return ""
+
+
+def _write_pybliometrics_key(api_key: str):
+    """Write Scopus API key to pybliometrics config so pybliometrics can use it too."""
+    cfg_path = Path.home() / ".config" / "pybliometrics.cfg"
+    try:
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cp = ConfigParser()
+        if cfg_path.exists():
+            cp.read(str(cfg_path))
+        if not cp.has_section("Authentication"):
+            cp.add_section("Authentication")
+        cp.set("Authentication", "APIKey", api_key)
+        # Ensure Directories section exists (pybliometrics needs it)
+        if not cp.has_section("Directories"):
+            cp.add_section("Directories")
+            cache_dir = str(Path.home() / ".cache" / "pybliometrics")
+            cp.set("Directories", "AbstractRetrieval", cache_dir + "/abstract_retrieval")
+            cp.set("Directories", "AffiliationSearch", cache_dir + "/affiliation_search")
+            cp.set("Directories", "AuthorRetrieval", cache_dir + "/author_retrieval")
+            cp.set("Directories", "AuthorSearch", cache_dir + "/author_search")
+            cp.set("Directories", "CitationOverview", cache_dir + "/citation_overview")
+            cp.set("Directories", "ScopusSearch", cache_dir + "/scopus_search")
+            cp.set("Directories", "SerialTitle", cache_dir + "/serial_title")
+        with open(cfg_path, "w") as f:
+            cp.write(f)
+        logger.info(f"Wrote Scopus API key to {cfg_path}")
+    except Exception as e:
+        logger.warning(f"Failed to write pybliometrics config: {e}")
 
 
 class ScopusSource(BaseDataSource):
@@ -23,8 +76,15 @@ class ScopusSource(BaseDataSource):
         self._api_key: str = ""
         self._client: httpx.AsyncClient | None = None
 
+    def _resolve_api_key(self) -> str:
+        """Resolve API key: env var → DB setting → pybliometrics config."""
+        key = os.environ.get("SCOPUS_API_KEY", "")
+        if not key:
+            key = _read_pybliometrics_key()
+        return key
+
     def _get_client(self) -> httpx.AsyncClient:
-        api_key = os.environ.get("SCOPUS_API_KEY", self._api_key)
+        api_key = self._resolve_api_key()
         if not api_key:
             raise RuntimeError("Scopus API key not configured")
         if self._client is None or self._api_key != api_key:
@@ -177,11 +237,7 @@ class ScopusSource(BaseDataSource):
             return []
 
     async def is_available(self) -> bool:
-        try:
-            api_key = os.environ.get("SCOPUS_API_KEY", "")
-            return bool(api_key)
-        except Exception:
-            return False
+        return bool(self._resolve_api_key())
 
     def _parse_entry(self, entry: dict) -> UnifiedPaper | None:
         """Parse a Scopus search result entry."""

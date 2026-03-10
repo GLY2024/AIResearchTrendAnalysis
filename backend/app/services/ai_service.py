@@ -1,18 +1,18 @@
-"""AI service with LiteLLM - role-based model routing."""
+"""AI service - direct OpenAI SDK, no LiteLLM routing issues."""
 
 import logging
 import os
 from typing import AsyncGenerator
 
-import litellm
+from openai import AsyncOpenAI
 
 from app.config import settings
 from app.core.exceptions import AIServiceError
 
-logger = logging.getLogger(__name__)
+# OpenAI SDK built-in retry count for transient errors (500, 429, etc.)
+SDK_MAX_RETRIES = 3
 
-# Suppress litellm's verbose logging
-litellm.suppress_debug_info = True
+logger = logging.getLogger(__name__)
 
 # Chat system prompt
 CHAT_SYSTEM_PROMPT = """You are ARTA (AI Research Trend Analysis), an AI research assistant that helps users explore and analyze academic research trends.
@@ -32,7 +32,7 @@ Guidelines:
 
 
 class AIService:
-    """Unified AI interface with role-based model routing."""
+    """Unified AI interface with role-based model routing via OpenAI SDK."""
 
     ROLE_MODEL_MAP = {
         "chat": "ai_chat_model",
@@ -42,7 +42,6 @@ class AIService:
         "executor": "ai_executor_model",
     }
 
-    # DB setting keys that override config defaults
     _MODEL_SETTING_KEYS = {
         "model_chat": "ai_chat_model",
         "model_planner": "ai_planner_model",
@@ -51,8 +50,38 @@ class AIService:
         "model_executor": "ai_executor_model",
     }
 
+    _PROVIDER_SETTING_KEYS = {
+        "model_chat_provider",
+        "model_planner_provider",
+        "model_analyst_provider",
+        "model_publisher_provider",
+        "model_executor_provider",
+    }
+
+    # Provider defaults - all use OpenAI-compatible protocol
+    _PROVIDER_DEFAULTS = {
+        "openai": {
+            "base_url": "https://api.openai.com/v1",
+            "base_url_key": "openai_base_url",
+            "api_key_key": "openai_api_key",
+        },
+        "anthropic": {
+            "base_url": "https://api.anthropic.com/v1",
+            "base_url_key": "anthropic_base_url",
+            "api_key_key": "anthropic_api_key",
+        },
+        "openrouter": {
+            "base_url": "https://openrouter.ai/api/v1",
+            "base_url_key": "openrouter_base_url",
+            "api_key_key": "openrouter_api_key",
+        },
+    }
+
     def __init__(self):
         self._model_overrides: dict[str, str] = {}
+        self._provider_overrides: dict[str, str] = {}
+        self._db_settings: dict[str, str] = {}
+        self._clients: dict[str, AsyncOpenAI] = {}
 
     async def load_settings_from_db(self):
         """Load API keys and model overrides from the database."""
@@ -63,36 +92,76 @@ class AIService:
         try:
             async with async_session() as db:
                 result = await db.execute(select(AppSetting))
+                self._db_settings.clear()
+                self._model_overrides.clear()
+                self._provider_overrides.clear()
+                self._clients.clear()
+
                 for s in result.scalars().all():
-                    # API keys → environment variables
+                    if s.value:
+                        self._db_settings[s.key] = s.value
+
+                    # API keys → env vars (for backward compat)
                     env_map = {
                         "openai_api_key": "OPENAI_API_KEY",
                         "anthropic_api_key": "ANTHROPIC_API_KEY",
                         "google_api_key": "GEMINI_API_KEY",
                         "scopus_api_key": "SCOPUS_API_KEY",
+                        "openrouter_api_key": "OPENROUTER_API_KEY",
                     }
                     if s.key in env_map and s.value:
                         os.environ[env_map[s.key]] = s.value
-                    # Base URLs → environment variables for LiteLLM
-                    base_url_map = {
-                        "openai_base_url": "OPENAI_API_BASE",
-                        "anthropic_base_url": "ANTHROPIC_API_BASE",
-                    }
-                    if s.key in base_url_map and s.value:
-                        os.environ[base_url_map[s.key]] = s.value
-                        logger.info(f"Set {base_url_map[s.key]} = {s.value}")
+
                     # Model overrides
                     if s.key in self._MODEL_SETTING_KEYS and s.value:
                         attr = self._MODEL_SETTING_KEYS[s.key]
                         self._model_overrides[attr] = s.value
                         logger.info(f"Model override: {attr} = {s.value}")
-        except Exception as e:
-            logger.warning(f"Failed to load settings from DB: {e}")
 
-    def _get_model(self, role: str) -> str:
-        attr = self.ROLE_MODEL_MAP.get(role, "ai_chat_model")
-        # Check DB overrides first, then config
-        return self._model_overrides.get(attr, getattr(settings, attr))
+                    # Provider overrides
+                    if s.key in self._PROVIDER_SETTING_KEYS and s.value:
+                        model_key = s.key.replace("_provider", "")
+                        attr = self._MODEL_SETTING_KEYS.get(model_key)
+                        if attr:
+                            self._provider_overrides[attr] = s.value
+                            logger.info(f"Provider override: {attr} = {s.value}")
+        except Exception as e:
+            logger.error(f"CRITICAL: Failed to load settings from DB: {e}", exc_info=True)
+
+    def _get_client(self, provider: str) -> AsyncOpenAI:
+        """Get or create an AsyncOpenAI client for the given provider."""
+        if provider in self._clients:
+            return self._clients[provider]
+
+        cfg = self._PROVIDER_DEFAULTS.get(provider)
+        if not cfg:
+            raise AIServiceError(f"Unknown provider: {provider}")
+
+        base_url = (self._db_settings.get(cfg["base_url_key"]) or cfg["base_url"]).rstrip("/")
+        api_key = self._db_settings.get(cfg["api_key_key"])
+        if not api_key:
+            raise AIServiceError(
+                f"No API key configured for provider '{provider}'. "
+                f"Please go to Settings and configure your API key.",
+                error_code="no_api_key",
+            )
+
+        client = AsyncOpenAI(base_url=base_url, api_key=api_key, max_retries=SDK_MAX_RETRIES)
+        self._clients[provider] = client
+        logger.info(f"Created OpenAI client for provider={provider}, base_url={base_url}")
+        return client
+
+    def _get_model_config(self, role: str) -> tuple[AsyncOpenAI, str]:
+        """Resolve client + model name for a given role. Returns (client, model_name)."""
+        attr = self.ROLE_MODEL_MAP.get(role)
+        if not attr:
+            raise AIServiceError(f"Unknown AI role: '{role}'. Valid: {list(self.ROLE_MODEL_MAP.keys())}")
+        model = self._model_overrides.get(attr, getattr(settings, attr))
+        provider = self._provider_overrides.get(attr, "openai")
+
+        client = self._get_client(provider)
+        logger.debug(f"Role={role}: model={model}, provider={provider}")
+        return client, model
 
     async def chat(
         self,
@@ -101,10 +170,10 @@ class AIService:
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> str:
-        """Non-streaming chat completion."""
-        model = self._get_model(role)
+        """Non-streaming chat completion (SDK handles retries via max_retries)."""
+        client, model = self._get_model_config(role)
         try:
-            response = await litellm.acompletion(
+            response = await client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
@@ -123,16 +192,16 @@ class AIService:
         max_tokens: int = 4096,
     ) -> AsyncGenerator[str, None]:
         """Streaming chat completion."""
-        model = self._get_model(role)
+        client, model = self._get_model_config(role)
         try:
-            response = await litellm.acompletion(
+            stream = await client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True,
             )
-            async for chunk in response:
+            async for chunk in stream:
                 delta = chunk.choices[0].delta
                 if delta.content:
                     yield delta.content
@@ -148,9 +217,9 @@ class AIService:
         temperature: float = 0.0,
     ) -> dict:
         """Chat completion with function calling / tools."""
-        model = self._get_model(role)
+        client, model = self._get_model_config(role)
         try:
-            response = await litellm.acompletion(
+            response = await client.chat.completions.create(
                 model=model,
                 messages=messages,
                 tools=tools,

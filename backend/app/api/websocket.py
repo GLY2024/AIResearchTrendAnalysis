@@ -7,6 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from app.core.events import event_bus
+from app.core.exceptions import AIServiceError
 from app.db.engine import async_session
 from app.db.models import ChatMessage, ResearchSession, SearchPlan
 from app.services.ai_service import ai_service, CHAT_SYSTEM_PROMPT
@@ -63,9 +64,12 @@ async def _handle_chat_send(websocket: WebSocket, session_id: str, data: dict):
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
             full_response = "Sorry, something went wrong. Please try again."
+            error_data: dict = {"message": str(e)}
+            if isinstance(e, AIServiceError) and e.error_code:
+                error_data["error_code"] = e.error_code
             await websocket.send_text(json.dumps({
                 "event": "error",
-                "data": {"message": str(e)},
+                "data": error_data,
             }))
 
         # Save assistant message
@@ -137,9 +141,12 @@ async def _handle_generate_plan(websocket: WebSocket, session_id: str, data: dic
 
         except Exception as e:
             logger.error(f"Plan generation error: {e}")
+            error_data: dict = {"message": f"Plan generation failed: {e}"}
+            if isinstance(e, AIServiceError) and e.error_code:
+                error_data["error_code"] = e.error_code
             await websocket.send_text(json.dumps({
                 "event": "error",
-                "data": {"message": f"Plan generation failed: {e}"},
+                "data": error_data,
             }))
 
 

@@ -1,6 +1,7 @@
 """FastAPI application factory."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -31,12 +32,16 @@ async def lifespan(app: FastAPI):
     from app.services.ai_service import ai_service
     await ai_service.load_settings_from_db()
 
-    # Register data sources
+    # Register data sources (always register all; availability checked at query time)
     source_registry.register(OpenAlexSource())
     source_registry.register(ArxivSource())
-    scopus = ScopusSource()
-    if await scopus.is_available():
-        source_registry.register(scopus)
+    source_registry.register(ScopusSource())
+
+    # If DB has scopus_api_key, sync it to pybliometrics config
+    scopus_key = os.environ.get("SCOPUS_API_KEY", "")
+    if scopus_key:
+        from app.sources.scopus_source import _write_pybliometrics_key
+        _write_pybliometrics_key(scopus_key)
 
     source_status = await source_registry.status()
     logger.info(f"Data sources: {source_status}")

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onUnmounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import type { SearchPlan } from '@/types'
 import { searchApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
@@ -7,12 +8,14 @@ import { useWebSocket } from '@/composables/useWebSocket'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 import GlassCard from '@/components/common/GlassCard.vue'
 
+const router = useRouter()
 const sessionStore = useSessionStore()
 const backendState = useBackendState()
 const plans = ref<SearchPlan[]>([])
 const loading = ref(false)
 const expandedId = ref<number | null>(null)
 const actionError = ref('')
+const needsApiKey = ref(false)
 
 // Search progress tracking
 interface SearchProgress {
@@ -67,6 +70,11 @@ function setupWebSocket() {
   })
 
   ws.on('error', (data: Record<string, unknown>) => {
+    if (data.error_code === 'no_api_key') {
+      needsApiKey.value = true
+      actionError.value = (data.message as string) || 'API key not configured.'
+      return
+    }
     const planId = data.plan_id as number | undefined
     if (planId) {
       activeProgress.value.delete(planId)
@@ -147,8 +155,22 @@ onUnmounted(() => {
 
     <div v-else-if="loading" class="text-[var(--text-muted)]">Loading plans...</div>
 
+    <!-- API key missing prompt -->
     <div
-      v-if="actionError"
+      v-if="needsApiKey"
+      class="mb-4 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-primary)]/10 px-5 py-4"
+    >
+      <p class="text-sm font-medium text-[var(--text-primary)] mb-2">API Key Required</p>
+      <p class="text-sm text-[var(--text-secondary)] mb-3">{{ actionError }}</p>
+      <button
+        class="glass-btn glass-btn-primary text-sm"
+        @click="router.push('/settings'); needsApiKey = false; actionError = ''"
+      >
+        Go to Settings
+      </button>
+    </div>
+    <div
+      v-else-if="actionError"
       class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
     >
       {{ actionError }}

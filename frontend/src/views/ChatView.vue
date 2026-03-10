@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import type { ChatMessage as ChatMessageType } from '@/types'
 import { chatApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
@@ -8,6 +9,7 @@ import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/compo
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 
+const router = useRouter()
 const sessionStore = useSessionStore()
 const backendState = useBackendState()
 const messages = ref<ChatMessageType[]>([])
@@ -17,6 +19,7 @@ const streamingContent = ref('')
 const scrollContainer = ref<HTMLElement | null>(null)
 const planGenerating = ref(false)
 const actionError = ref('')
+const needsApiKey = ref(false)
 
 // WebSocket connection - reactive to session changes
 let ws: ReturnType<typeof useWebSocket> | null = null
@@ -66,6 +69,13 @@ function setupWebSocket() {
     loading.value = false
     streaming.value = false
     planGenerating.value = false
+
+    if (data.error_code === 'no_api_key') {
+      needsApiKey.value = true
+      actionError.value = (data.message as string) || 'API key not configured.'
+      return
+    }
+
     if (streamingContent.value) {
       // Save whatever was streamed
       messages.value.push({
@@ -240,8 +250,22 @@ onUnmounted(() => {
 
     <!-- Chat area -->
     <template v-else>
+      <!-- API key missing prompt -->
       <div
-        v-if="actionError"
+        v-if="needsApiKey"
+        class="mb-4 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--accent-primary)]/10 px-5 py-4"
+      >
+        <p class="text-sm font-medium text-[var(--text-primary)] mb-2">API Key Required</p>
+        <p class="text-sm text-[var(--text-secondary)] mb-3">{{ actionError }}</p>
+        <button
+          class="glass-btn glass-btn-primary text-sm"
+          @click="router.push('/settings'); needsApiKey = false; actionError = ''"
+        >
+          Go to Settings
+        </button>
+      </div>
+      <div
+        v-else-if="actionError"
         class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
       >
         {{ actionError }}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch, nextTick } from 'vue'
 import { settingsApi } from '@/composables/useApi'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 
@@ -33,8 +33,13 @@ interface ModelRole {
   label: string
   description: string
   value: string
+  provider: string       // 'openai' | 'anthropic' | ''
   saving: boolean
   dirty: boolean
+  modelOptions: { id: string; name: string }[]
+  loadingModels: boolean
+  modelError: string
+  showCustom: boolean    // toggle for custom model input
 }
 
 // --- Provider definitions ---
@@ -42,7 +47,7 @@ const providers: Provider[] = [
   {
     id: 'openai',
     name: 'OpenAI',
-    description: 'GPT-4o, GPT-4o-mini and compatible APIs (vLLM, LM Studio, etc.)',
+    description: 'GPT-4o, GPT-4o-mini and compatible APIs (DeepBricks, vLLM, etc.)',
     icon: '🟢',
     fields: { apiKey: 'openai_api_key', baseUrl: 'openai_base_url' },
     defaults: { baseUrl: 'https://api.openai.com/v1' },
@@ -53,7 +58,15 @@ const providers: Provider[] = [
     description: 'Claude Opus, Sonnet, Haiku and compatible APIs',
     icon: '🟠',
     fields: { apiKey: 'anthropic_api_key', baseUrl: 'anthropic_base_url' },
-    defaults: { baseUrl: 'https://api.anthropic.com' },
+    defaults: { baseUrl: 'https://api.anthropic.com/v1' },
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    description: 'Access 200+ models via unified API (OpenAI, Google, Meta, etc.)',
+    icon: '🔀',
+    fields: { apiKey: 'openrouter_api_key', baseUrl: 'openrouter_base_url' },
+    defaults: { baseUrl: 'https://openrouter.ai/api/v1' },
   },
 ]
 
@@ -71,12 +84,16 @@ for (const p of providers) {
   }
 }
 
+function makeRole(key: string, label: string, description: string): ModelRole {
+  return { key, label, description, value: '', provider: '', saving: false, dirty: false, modelOptions: [], loadingModels: false, modelError: '', showCustom: false }
+}
+
 const modelRoles = ref<ModelRole[]>([
-  { key: 'model_chat', label: 'Chat', description: 'General conversation and research discussion', value: '', saving: false, dirty: false },
-  { key: 'model_planner', label: 'Planner', description: 'Search strategy and plan generation', value: '', saving: false, dirty: false },
-  { key: 'model_analyst', label: 'Analyst', description: 'Data analysis and interpretation', value: '', saving: false, dirty: false },
-  { key: 'model_publisher', label: 'Publisher', description: 'Report writing and formatting', value: '', saving: false, dirty: false },
-  { key: 'model_executor', label: 'Executor', description: 'Search execution and tool calling', value: '', saving: false, dirty: false },
+  makeRole('model_chat', 'Chat', 'General conversation and research discussion'),
+  makeRole('model_planner', 'Planner', 'Search strategy and plan generation'),
+  makeRole('model_analyst', 'Analyst', 'Data analysis and interpretation'),
+  makeRole('model_publisher', 'Publisher', 'Report writing and formatting'),
+  makeRole('model_executor', 'Executor', 'Search execution and tool calling'),
 ])
 
 const extraKeys = ref<{ key: string; label: string; value: string; saving: boolean; dirty: boolean }[]>([
@@ -109,6 +126,8 @@ async function loadSettings() {
     for (const role of modelRoles.value) {
       const v = map.get(role.key)
       if (v) role.value = v
+      const pv = map.get(`${role.key}_provider`)
+      if (pv) role.provider = pv
     }
 
     for (const ek of extraKeys.value) {
@@ -202,9 +221,13 @@ async function saveModelRole(role: ModelRole) {
   }
   role.saving = true
   try {
-    await settingsApi.update({ key: role.key, value: role.value })
+    // Save model name and provider in parallel
+    await Promise.all([
+      settingsApi.update({ key: role.key, value: role.value }),
+      settingsApi.update({ key: `${role.key}_provider`, value: role.provider }),
+    ])
     role.dirty = false
-    console.log(`[ARTA:Settings] Saved model role ${role.key} = ${role.value}`)
+    console.log(`[ARTA:Settings] Saved model role ${role.key} = ${role.provider}/${role.value}`)
   } catch (err) {
     console.error(`[ARTA:Settings] Failed to save model role ${role.key}:`, err)
     pageError.value = err instanceof Error ? err.message : `Failed to save ${role.key}.`
@@ -212,6 +235,32 @@ async function saveModelRole(role: ModelRole) {
   } finally {
     role.saving = false
   }
+}
+
+// Fetch models for a role's selected provider
+async function fetchModelsForRole(role: ModelRole) {
+  if (!role.provider) {
+    role.modelOptions = []
+    return
+  }
+  role.loadingModels = true
+  role.modelError = ''
+  role.modelOptions = []
+  try {
+    const resp = await settingsApi.fetchModels(role.provider)
+    role.modelOptions = resp.models
+    if (resp.error) role.modelError = resp.error
+  } catch (err) {
+    role.modelError = err instanceof Error ? err.message : 'Failed to fetch models'
+    role.modelOptions = []
+  } finally {
+    role.loadingModels = false
+  }
+}
+
+// Computed: list of enabled provider ids
+function enabledProviders() {
+  return providers.filter(p => providerState(p.id).enabled)
 }
 
 // --- Save extra key ---
@@ -365,38 +414,115 @@ onMounted(loadSettings)
           Model Assignments
         </h2>
         <p class="text-xs text-[var(--text-muted)] mb-3">
-          Specify which model handles each role. Use LiteLLM format, e.g.
-          <code class="px-1 py-0.5 rounded bg-white/5">gpt-4o</code>,
-          <code class="px-1 py-0.5 rounded bg-white/5">claude-sonnet-4-20250514</code>,
-          <code class="px-1 py-0.5 rounded bg-white/5">anthropic/claude-haiku-4-5-20251001</code>
+          Select a provider and model for each role. Models are fetched from the provider's API.
         </p>
 
         <div class="rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] divide-y divide-white/5">
           <div
             v-for="role in modelRoles"
             :key="role.key"
-            class="flex items-center gap-4 px-5 py-3"
+            class="px-5 py-3 space-y-2"
           >
-            <div class="w-24 shrink-0">
-              <span class="text-sm font-medium text-[var(--text-primary)]">{{ role.label }}</span>
-              <p class="text-[10px] text-[var(--text-muted)] leading-tight mt-0.5">{{ role.description }}</p>
+            <div class="flex items-center gap-3">
+              <!-- Role label -->
+              <div class="w-24 shrink-0">
+                <span class="text-sm font-medium text-[var(--text-primary)]">{{ role.label }}</span>
+                <p class="text-[10px] text-[var(--text-muted)] leading-tight mt-0.5">{{ role.description }}</p>
+              </div>
+
+              <!-- Provider dropdown -->
+              <select
+                v-model="role.provider"
+                class="glass-input w-36 text-sm"
+                @change="role.dirty = true; role.value = ''; fetchModelsForRole(role)"
+              >
+                <option value="" disabled>Provider…</option>
+                <option
+                  v-for="ep in enabledProviders()"
+                  :key="ep.id"
+                  :value="ep.id"
+                >
+                  {{ ep.icon }} {{ ep.name }}
+                </option>
+              </select>
+
+              <!-- Model select / custom input -->
+              <div class="flex-1 relative">
+                <div v-if="role.loadingModels" class="glass-input text-sm text-[var(--text-muted)] flex items-center">
+                  Loading models…
+                </div>
+                <template v-else>
+                  <!-- Dropdown mode -->
+                  <div v-if="!role.showCustom" class="flex gap-1">
+                    <select
+                      v-model="role.value"
+                      class="glass-input flex-1 text-sm"
+                      @change="role.dirty = true"
+                      :disabled="!role.provider"
+                    >
+                      <option value="" disabled>Select model…</option>
+                      <option
+                        v-for="m in role.modelOptions"
+                        :key="m.id"
+                        :value="m.id"
+                      >
+                        {{ m.id }}
+                      </option>
+                      <!-- Keep current value visible if not in list -->
+                      <option
+                        v-if="role.value && !role.modelOptions.find(m => m.id === role.value)"
+                        :value="role.value"
+                      >
+                        {{ role.value }} (custom)
+                      </option>
+                    </select>
+                    <button
+                      class="glass-btn text-[10px] shrink-0 px-2"
+                      title="Type a custom model name"
+                      @click="role.showCustom = true"
+                    >
+                      ✎
+                    </button>
+                  </div>
+                  <!-- Custom input mode -->
+                  <div v-else class="flex gap-1">
+                    <input
+                      v-model="role.value"
+                      type="text"
+                      class="glass-input flex-1 text-sm"
+                      placeholder="e.g. gemini-2.5-flash"
+                      @input="role.dirty = true"
+                      @keydown.enter="saveModelRole(role)"
+                    />
+                    <button
+                      class="glass-btn text-[10px] shrink-0 px-2"
+                      title="Switch back to dropdown"
+                      @click="role.showCustom = false"
+                    >
+                      ▾
+                    </button>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Save button -->
+              <button
+                class="glass-btn text-xs shrink-0"
+                :class="role.dirty ? 'glass-btn-primary' : ''"
+                :disabled="role.saving || !role.value || !role.provider || backendState.status !== 'online'"
+                @click="saveModelRole(role)"
+              >
+                {{ role.saving ? '...' : role.dirty ? 'Save' : 'Saved' }}
+              </button>
             </div>
-            <input
-              v-model="role.value"
-              type="text"
-              class="glass-input flex-1 text-sm"
-              placeholder="e.g. gpt-4o"
-              @input="role.dirty = true"
-              @keydown.enter="saveModelRole(role)"
-            />
-            <button
-              class="glass-btn text-xs shrink-0"
-              :class="role.dirty ? 'glass-btn-primary' : ''"
-              :disabled="role.saving || !role.value || backendState.status !== 'online'"
-              @click="saveModelRole(role)"
+
+            <!-- Model fetch error -->
+            <p
+              v-if="role.modelError"
+              class="text-[10px] text-[var(--error)] pl-[6.5rem]"
             >
-              {{ role.saving ? '...' : role.dirty ? 'Save' : 'Saved' }}
-            </button>
+              {{ role.modelError }}
+            </p>
           </div>
         </div>
       </section>
