@@ -1,7 +1,6 @@
 """SQLAlchemy ORM models for ARTA."""
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -36,7 +35,6 @@ class ResearchSession(Base):
     # Relationships
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
     search_plans = relationship("SearchPlan", back_populates="session", cascade="all, delete-orphan")
-    snowball_runs = relationship("SnowballRun", back_populates="session", cascade="all, delete-orphan")
     papers = relationship("Paper", back_populates="session", cascade="all, delete-orphan")
     analysis_runs = relationship("AnalysisRun", back_populates="session", cascade="all, delete-orphan")
     reports = relationship("Report", back_populates="session", cascade="all, delete-orphan")
@@ -67,7 +65,6 @@ class SearchPlan(Base):
 
     session = relationship("ResearchSession", back_populates="search_plans")
     executions = relationship("SearchExecution", back_populates="plan", cascade="all, delete-orphan")
-    snowball_runs = relationship("SnowballRun", back_populates="plan", cascade="all, delete-orphan")
 
 
 class SearchExecution(Base):
@@ -123,7 +120,7 @@ class Paper(Base):
 
     # Source tracking
     source = Column(String(100))  # which data source found this
-    discovery_method = Column(String(50))  # search, forward_snowball, backward_snowball
+    discovery_method = Column(String(50))  # search
     relevance_score = Column(Float)
 
     # Status
@@ -166,62 +163,6 @@ class AnalysisRun(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     session = relationship("ResearchSession", back_populates="analysis_runs")
-
-
-class SnowballRun(Base):
-    __tablename__ = "snowball_runs"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    session_id = Column(Integer, ForeignKey("research_sessions.id", ondelete="CASCADE"), nullable=False)
-    plan_id = Column(Integer, ForeignKey("search_plans.id", ondelete="CASCADE"), nullable=False)
-    status = Column(String(50), default="proposed")  # proposed, running, awaiting_review, completed, rejected, failed
-    config = Column(JSON, default=dict)
-    proposal_summary = Column(JSON, default=dict)
-    stats = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    session = relationship("ResearchSession", back_populates="snowball_runs")
-    plan = relationship("SearchPlan", back_populates="snowball_runs")
-    candidates = relationship("SnowballCandidate", back_populates="run", cascade="all, delete-orphan")
-
-
-class SnowballCandidate(Base):
-    __tablename__ = "snowball_candidates"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    run_id = Column(Integer, ForeignKey("snowball_runs.id", ondelete="CASCADE"), nullable=False)
-    seed_paper_id = Column(Integer, ForeignKey("papers.id", ondelete="SET NULL"), nullable=True)
-    direction = Column(String(20), nullable=False)
-    hop = Column(Integer, default=1)
-    title = Column(Text, nullable=False)
-    abstract = Column(Text, default="")
-    authors = Column(JSON, default=list)
-    journal = Column(String(500), default="")
-    year = Column(Integer, index=True)
-    publication_date = Column(String(20))
-    doi = Column(String(255), index=True)
-    arxiv_id = Column(String(100), index=True)
-    openalex_id = Column(String(100), index=True)
-    scopus_id = Column(String(100))
-    url = Column(Text)
-    pdf_url = Column(Text)
-    citation_count = Column(Integer, default=0)
-    reference_count = Column(Integer, default=0)
-    keywords = Column(JSON, default=list)
-    fields = Column(JSON, default=list)
-    paper_type = Column(String(50))
-    source_name = Column(String(100), default="openalex")
-    relevance_score = Column(Float)
-    relevance_reason = Column(Text, default="")
-    verification_status = Column(String(50), default="unchecked")
-    verification_sources = Column(JSON, default=list)
-    duplicate_reason = Column(Text, default="")
-    status = Column(String(50), default="pending")  # pending, approved, rejected, imported
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    run = relationship("SnowballRun", back_populates="candidates")
 
 
 class Report(Base):

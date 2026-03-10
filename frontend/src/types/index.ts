@@ -33,30 +33,9 @@ export interface SearchPlanData {
   queries: SearchQuery[]
   year_range: { from: number | null; to: number | null }
   max_results_per_query: number
-  // Legacy placeholder kept for backend compatibility. The feature is disabled.
-  snowball_config: SnowballConfig
   inclusion_criteria: string[]
   exclusion_criteria: string[]
   notes: string
-}
-
-export interface SnowballConfig {
-  enabled: boolean
-  approval_required?: boolean
-  approval_mode?: 'batch' | 'all'
-  decision_mode?: 'manual_review' | 'all' | 'high_confidence'
-  max_hops: number
-  directions: string[]
-  min_citation_threshold: number
-  max_seed_papers?: number
-  per_seed_limit?: number
-  max_candidates?: number
-  verification_mode?: 'none' | 'stable_identifier' | 'cross_source'
-  ai_filter?: {
-    enabled: boolean
-    min_score: number
-    auto_import_score: number
-  }
 }
 
 export interface SearchQuery {

@@ -12,7 +12,6 @@ from app.analysis.trend_detection import run_trend_analysis
 from app.core.events import event_bus
 from app.db.models import AnalysisRun, AppSetting, Paper
 from app.services.ai_service import ai_service
-from app.services.corpus_scope import primary_corpus_clause
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,6 @@ class AnalystAgent:
             select(Paper)
             .where(Paper.session_id == analysis_run.session_id)
             .where(Paper.is_included == True)
-            .where(primary_corpus_clause())
         )
         papers = result.scalars().all()
 

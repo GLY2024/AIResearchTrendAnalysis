@@ -53,11 +53,11 @@ class BaseDataSource(ABC):
         ...
 
     async def get_citations(self, paper_id: str) -> list[UnifiedPaper]:
-        """Forward snowball: papers that cite this paper."""
+        """Forward citation expansion: papers that cite this paper."""
         return []
 
     async def get_references(self, paper_id: str) -> list[UnifiedPaper]:
-        """Backward snowball: papers this paper cites."""
+        """Backward citation expansion: papers this paper cites."""
         return []
 
     async def is_available(self) -> bool:

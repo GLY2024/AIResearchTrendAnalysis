@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas.common import PaperListResponse, PaperResponse, PaperUpdate
 from app.db.engine import get_session
 from app.db.models import Paper
-from app.services.corpus_scope import primary_corpus_clause
 
 router = APIRouter(prefix="/papers", tags=["papers"])
 
@@ -22,7 +21,7 @@ def _build_paper_stmt(
     search: str | None = None,
     discovery_method: str | None = None,
 ):
-    stmt = select(Paper).where(Paper.session_id == session_id).where(primary_corpus_clause())
+    stmt = select(Paper).where(Paper.session_id == session_id)
     if included_only:
         stmt = stmt.where(Paper.is_included == True)
     if year_from:
@@ -122,10 +121,10 @@ async def count_papers(
 async def list_sources(session_id: int, db: AsyncSession = Depends(get_session)):
     """List distinct sources and discovery methods for filter dropdowns."""
     sources_result = await db.execute(
-        select(Paper.source).where(Paper.session_id == session_id).where(primary_corpus_clause()).distinct()
+        select(Paper.source).where(Paper.session_id == session_id).distinct()
     )
     methods_result = await db.execute(
-        select(Paper.discovery_method).where(Paper.session_id == session_id).where(primary_corpus_clause()).distinct()
+        select(Paper.discovery_method).where(Paper.session_id == session_id).distinct()
     )
     return {
         "sources": [r[0] for r in sources_result.all() if r[0]],

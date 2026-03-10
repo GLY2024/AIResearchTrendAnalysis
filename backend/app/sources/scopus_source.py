@@ -176,7 +176,7 @@ class ScopusSource(BaseDataSource):
         return None
 
     async def get_citations(self, paper_id: str) -> list[UnifiedPaper]:
-        """Forward snowball: papers citing this paper."""
+        """Forward citation expansion: papers citing this paper."""
         client = self._get_client()
         try:
             # Use scopus search with refeid filter
@@ -200,7 +200,7 @@ class ScopusSource(BaseDataSource):
             return []
 
     async def get_references(self, paper_id: str) -> list[UnifiedPaper]:
-        """Backward snowball: papers this paper cites."""
+        """Backward citation expansion: papers this paper cites."""
         client = self._get_client()
         try:
             if paper_id.startswith("2-s2.0-"):

@@ -164,24 +164,6 @@ function clonePlanData(plan: SearchPlan): SearchPlanData {
   copied.inclusion_criteria = copied.inclusion_criteria ?? []
   copied.exclusion_criteria = copied.exclusion_criteria ?? []
   copied.year_range = copied.year_range ?? { from: null, to: null }
-  copied.snowball_config = {
-    enabled: false,
-    approval_required: false,
-    approval_mode: 'batch',
-    decision_mode: 'manual_review',
-    max_hops: 1,
-    directions: ['forward'],
-    min_citation_threshold: 10,
-    max_seed_papers: 5,
-    per_seed_limit: 25,
-    max_candidates: 150,
-    verification_mode: 'stable_identifier',
-    ai_filter: {
-      enabled: false,
-      min_score: 0.55,
-      auto_import_score: 0.8,
-    },
-  }
   return copied
 }
 

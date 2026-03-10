@@ -68,9 +68,12 @@ class PlannerAgent:
             logger.error(f"Failed to parse planner response: {e}")
             plan = {
                 "topic": topic,
-                "queries": [{"query": topic, "source": "openalex"}],
+                "description": f"Fallback search plan for: {topic}",
+                "queries": [{"query": topic, "source": "openalex", "rationale": "Fallback broad query"}],
                 "year_range": {"from": None, "to": None},
                 "max_results_per_query": 100,
+                "inclusion_criteria": [],
+                "exclusion_criteria": [],
                 "notes": "Auto-generated fallback plan",
             }
 

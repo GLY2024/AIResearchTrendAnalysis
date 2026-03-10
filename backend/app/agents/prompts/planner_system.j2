@@ -31,12 +31,6 @@ Respond with a JSON object following this exact structure:
     "to": null
   },
   "max_results_per_query": 100,
-  "snowball_config": {
-    "enabled": false,
-    "max_hops": 0,
-    "directions": [],
-    "min_citation_threshold": 0
-  },
   "inclusion_criteria": [
     "criterion 1",
     "criterion 2"
@@ -72,11 +66,6 @@ Respond with a JSON object following this exact structure:
 - **Trend analysis**: use wider range (10-15 years) to capture evolution
 - Set `to: null` for "up to present"
 
-### Legacy Disabled Field
-- Keep `enabled: false` in the current release
-- Set `max_hops: 0`, `directions: []`, and `min_citation_threshold: 0`
-- Do not propose citation expansion steps in this JSON
-
 ### Inclusion/Exclusion Criteria
 - Be specific and actionable
 - Include language restrictions if relevant (e.g., "English language only")
@@ -89,3 +78,4 @@ Respond with a JSON object following this exact structure:
 - Use **arxiv** for preprint-heavy fields (CS, physics, math)
 - Distribute queries across multiple sources when possible
 - Consider the user's specific interests from the conversation history
+- Do not add extra top-level fields beyond this schema

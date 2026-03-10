@@ -93,7 +93,7 @@ class OpenAlexSource(BaseDataSource):
             return None
 
     async def get_citations(self, paper_id: str) -> list[UnifiedPaper]:
-        """Forward snowball: papers citing this one."""
+        """Forward citation expansion: papers citing this one."""
         try:
             resp = await self._client.get(
                 "/works",
@@ -110,7 +110,7 @@ class OpenAlexSource(BaseDataSource):
             return []
 
     async def get_references(self, paper_id: str) -> list[UnifiedPaper]:
-        """Backward snowball: papers this one cites."""
+        """Backward citation expansion: papers this one cites."""
         try:
             # First get the work to find referenced_works
             resp = await self._client.get(f"/works/{paper_id}")

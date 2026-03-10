@@ -170,14 +170,7 @@ async def main():
     trimmed = plan_data.copy()
     trimmed["queries"] = queries[:2]
     trimmed["max_results_per_query"] = 15
-    # Keep the legacy field disabled in the current release
-    if "snowball_config" in trimmed:
-        trimmed["snowball_config"]["enabled"] = False
-
-    # Update plan_data in DB (we'll just approve as-is and let executor use existing data)
-    # Actually we need to update it - let's use the settings update trick
-    # Better: directly approve and hope the trimming works via the plan
-    # For now just approve - the executor will use whatever's in plan_data
+    await api("post", f"/search/plans/{plan_id}/action", json={"action": "modify", "plan_data": trimmed})
 
     # Approve
     resp = await api("post", f"/search/plans/{plan_id}/action", json={"action": "approve"})
@@ -187,9 +180,10 @@ async def main():
     log.info("  Waiting for search to complete...")
 
     def has_papers(data):
-        return len(data) > 0
+        return len(data.get("items", [])) > 0
 
-    papers = await poll_until(f"/papers?session_id={sid}", has_papers, interval=5, timeout=90)
+    papers_page = await poll_until(f"/papers?session_id={sid}", has_papers, interval=5, timeout=90)
+    papers = papers_page.get("items", [])
     log.info(f"  Papers collected: {len(papers)}")
     for p in papers[:5]:
         log.info(f"    [{p.get('source', '?')}] {p.get('title', '')[:65]} ({p.get('year', '?')}, {p.get('citation_count', 0)} cites)")
@@ -200,8 +194,9 @@ async def main():
 
     # Wait a bit more for search to fully complete
     await asyncio.sleep(5)
-    papers = await api("get", f"/papers?session_id={sid}")
-    log.info(f"  Final paper count: {len(papers)}")
+    papers_page = await api("get", f"/papers?session_id={sid}")
+    papers = papers_page.get("items", [])
+    log.info(f"  Final paper count: {papers_page.get('total', len(papers))}")
 
     # =========================================================
     # 6. Run analyses
@@ -279,7 +274,7 @@ async def main():
     log.info(f"  Session:    id={sid}")
     log.info(f"  Chat:       OK ({len(full_response)} chars)")
     log.info(f"  Plan:       OK ({len(queries)} queries)")
-    log.info(f"  Search:     {'OK' if papers else 'FAIL'} ({len(papers)} papers)")
+    log.info(f"  Search:     {'OK' if papers else 'FAIL'} ({papers_page.get('total', len(papers))} papers)")
     log.info(f"  Analysis:   {'OK' if all_analyses_ok else 'PARTIAL'} ({len(analysis_ids)} runs)")
     log.info(f"  Report:     {status.upper()} ({len(content)} chars, {len(chart_groups)} chart groups)")
     log.info("=" * 60)

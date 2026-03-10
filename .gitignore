@@ -33,6 +33,10 @@ Thumbs.db
 # Tauri
 src-tauri/target/
 frontend/src-tauri/binaries/*.exe
+frontend/src-tauri/binaries/
+
+# Local tooling
+.claude/settings.local.json
 
 # PyInstaller
 backend/dist/

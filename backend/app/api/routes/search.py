@@ -18,16 +18,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/search", tags=["search"])
 
 
-def _disable_snowball(plan_data: dict | None) -> dict | None:
-    if not isinstance(plan_data, dict):
-        return plan_data
-    next_plan = dict(plan_data)
-    snowball = dict(next_plan.get("snowball_config") or {})
-    snowball["enabled"] = False
-    next_plan["snowball_config"] = snowball
-    return next_plan
-
-
 async def _run_search_pipeline(plan_id: int):
     """Background task: execute search plan."""
     async with async_session() as db:
@@ -73,7 +63,6 @@ async def plan_action(plan_id: int, body: SearchPlanAction, db: AsyncSession = D
         raise HTTPException(404, "Search plan not found")
 
     if body.action == "approve":
-        plan.plan_data = _disable_snowball(plan.plan_data)
         plan.status = "approved"
         await db.commit()
         task_manager.submit(_run_search_pipeline(plan_id), task_id=f"search-{plan_id}")
@@ -85,7 +74,7 @@ async def plan_action(plan_id: int, body: SearchPlanAction, db: AsyncSession = D
     elif body.action == "modify":
         if body.plan_data is None:
             raise HTTPException(400, "plan_data is required for modify")
-        plan.plan_data = _disable_snowball(body.plan_data)
+        plan.plan_data = body.plan_data
         plan.status = "draft"
         await db.commit()
         await event_bus.emit("search_plan_modified", {"plan_id": plan_id}, session_id=str(plan.session_id))
@@ -94,23 +83,3 @@ async def plan_action(plan_id: int, body: SearchPlanAction, db: AsyncSession = D
 
     await db.refresh(plan)
     return SearchPlanResponse.model_validate(plan)
-
-
-@router.get("/snowball-runs", include_in_schema=False)
-async def list_snowball_runs(session_id: int, db: AsyncSession = Depends(get_session)):
-    return []
-
-
-@router.get("/snowball-runs/{run_id}", include_in_schema=False)
-async def get_snowball_run(run_id: int, db: AsyncSession = Depends(get_session)):
-    raise HTTPException(410, "Snowball is disabled")
-
-
-@router.get("/snowball-runs/{run_id}/candidates", include_in_schema=False)
-async def list_snowball_candidates(run_id: int, db: AsyncSession = Depends(get_session)):
-    return []
-
-
-@router.post("/snowball-runs/{run_id}/action", include_in_schema=False)
-async def snowball_action(run_id: int, db: AsyncSession = Depends(get_session)):
-    raise HTTPException(410, "Snowball is disabled")

@@ -113,7 +113,7 @@ async function loadPapers() {
     totalPapers.value = total.count
     includedTotal.value = included.count
     availableSources.value = response.sources
-    availableMethods.value = response.discovery_methods.filter((method) => !method.includes('snowball'))
+    availableMethods.value = response.discovery_methods
 
     if (currentPage.value > pageCount.value) {
       currentPage.value = pageCount.value
