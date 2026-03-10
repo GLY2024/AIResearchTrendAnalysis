@@ -5,15 +5,14 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas.common import PaperResponse, PaperUpdate
+from app.api.schemas.common import PaperListResponse, PaperResponse, PaperUpdate
 from app.db.engine import get_session
 from app.db.models import Paper
 
 router = APIRouter(prefix="/papers", tags=["papers"])
 
 
-@router.get("", response_model=list[PaperResponse])
-async def list_papers(
+def _build_paper_stmt(
     session_id: int,
     included_only: bool = False,
     year_from: int | None = None,
@@ -21,11 +20,6 @@ async def list_papers(
     source: str | None = None,
     search: str | None = None,
     discovery_method: str | None = None,
-    sort_by: str = "citation_count",
-    sort_asc: bool = False,
-    limit: int = Query(default=200, le=1000),
-    offset: int = 0,
-    db: AsyncSession = Depends(get_session),
 ):
     stmt = select(Paper).where(Paper.session_id == session_id)
     if included_only:
@@ -47,7 +41,40 @@ async def list_papers(
                 Paper.journal.ilike(pattern),
             )
         )
+    return stmt
 
+
+@router.get("", response_model=PaperListResponse)
+async def list_papers(
+    session_id: int,
+    included_only: bool = False,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    source: str | None = None,
+    search: str | None = None,
+    discovery_method: str | None = None,
+    sort_by: str = "citation_count",
+    sort_asc: bool = False,
+    limit: int = Query(default=20, ge=1, le=1000),
+    offset: int = 0,
+    db: AsyncSession = Depends(get_session),
+):
+    base_stmt = _build_paper_stmt(
+        session_id=session_id,
+        included_only=included_only,
+        year_from=year_from,
+        year_to=year_to,
+        source=source,
+        search=search,
+        discovery_method=discovery_method,
+    )
+
+    total_result = await db.execute(
+        select(func.count()).select_from(base_stmt.subquery())
+    )
+    total = total_result.scalar() or 0
+
+    stmt = base_stmt
     sort_col = getattr(Paper, sort_by, Paper.citation_count)
     if sort_asc:
         stmt = stmt.order_by(sort_col.asc())
@@ -56,13 +83,36 @@ async def list_papers(
     stmt = stmt.offset(offset).limit(limit)
 
     result = await db.execute(stmt)
-    return [PaperResponse.model_validate(p) for p in result.scalars().all()]
+    return PaperListResponse(
+        items=[PaperResponse.model_validate(p) for p in result.scalars().all()],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/count")
-async def count_papers(session_id: int, db: AsyncSession = Depends(get_session)):
+async def count_papers(
+    session_id: int,
+    included_only: bool = False,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    source: str | None = None,
+    search: str | None = None,
+    discovery_method: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    stmt = _build_paper_stmt(
+        session_id=session_id,
+        included_only=included_only,
+        year_from=year_from,
+        year_to=year_to,
+        source=source,
+        search=search,
+        discovery_method=discovery_method,
+    )
     result = await db.execute(
-        select(func.count()).where(Paper.session_id == session_id)
+        select(func.count()).select_from(stmt.subquery())
     )
     return {"count": result.scalar() or 0}
 

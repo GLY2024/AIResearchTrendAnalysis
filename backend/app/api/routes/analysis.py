@@ -1,5 +1,6 @@
 """Analysis routes."""
 
+import hashlib
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,13 +9,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.common import AnalysisRequest, AnalysisResponse
 from app.db.engine import async_session, get_session
-from app.db.models import AnalysisRun
+from app.db.models import AnalysisRun, Paper
 from app.core.task_manager import task_manager
 from app.agents.analyst import analyst_agent
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+
+async def _compute_corpus_signature(db: AsyncSession, session_id: int) -> tuple[str, int]:
+    result = await db.execute(
+        select(Paper.id, Paper.updated_at)
+        .where(Paper.session_id == session_id)
+        .where(Paper.is_included == True)
+        .order_by(Paper.id)
+    )
+    rows = result.all()
+    digest = hashlib.sha1()
+    for paper_id, updated_at in rows:
+        digest.update(f"{paper_id}:{updated_at.isoformat() if updated_at else ''}|".encode("utf-8"))
+    return digest.hexdigest(), len(rows)
 
 
 async def _run_analysis(run_id: int):
@@ -45,10 +60,38 @@ async def list_analyses(session_id: int, db: AsyncSession = Depends(get_session)
 
 @router.post("", response_model=AnalysisResponse, status_code=201)
 async def create_analysis(body: AnalysisRequest, db: AsyncSession = Depends(get_session)):
+    corpus_signature, corpus_size = await _compute_corpus_signature(db, body.session_id)
+    if corpus_size == 0:
+        raise HTTPException(400, "No included papers are currently selected for analysis")
+
+    existing_result = await db.execute(
+        select(AnalysisRun)
+        .where(AnalysisRun.session_id == body.session_id)
+        .where(AnalysisRun.analysis_type == body.analysis_type)
+        .where(AnalysisRun.status.in_(["pending", "running", "completed"]))
+        .order_by(AnalysisRun.created_at.desc())
+    )
+    existing_runs = existing_result.scalars().all()
+    for existing in existing_runs:
+        params = existing.params or {}
+        if params.get("corpus_signature") == corpus_signature:
+            raise HTTPException(
+                409,
+                detail={
+                    "message": "This analysis has already been run for the current paper selection.",
+                    "existing_run_id": existing.id,
+                    "existing_status": existing.status,
+                    "analysis_type": existing.analysis_type,
+                },
+            )
+
+    params = dict(body.params or {})
+    params["corpus_signature"] = corpus_signature
+    params["corpus_size"] = corpus_size
     run = AnalysisRun(
         session_id=body.session_id,
         analysis_type=body.analysis_type,
-        params=body.params,
+        params=params,
         status="pending",
     )
     db.add(run)

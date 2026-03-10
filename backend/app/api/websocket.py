@@ -17,6 +17,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _build_chat_error_payload(exc: Exception) -> dict:
+    error_code = ""
+    status_code = getattr(exc, "status_code", None)
+    retryable = True
+    if isinstance(exc, AIServiceError):
+        error_code = exc.error_code
+        status_code = exc.status_code
+        retryable = exc.retryable if exc.retryable is not None else retryable
+    message = str(exc).strip() or "Unknown chat error"
+    label = error_code or (f"http_{status_code}" if status_code else "chat_error")
+    prefix = f"Request failed ({label})"
+    if status_code:
+        prefix += f", HTTP {status_code}"
+    return {
+        "message": message,
+        "error_code": error_code or "chat_error",
+        "status_code": status_code,
+        "retryable": retryable,
+        "summary": f"{prefix}\n{message}",
+    }
+
+
 async def _handle_chat_send(websocket: WebSocket, session_id: str, data: dict):
     """Handle streaming chat message via WebSocket."""
     content = data.get("content", "").strip()
@@ -36,6 +58,7 @@ async def _handle_chat_send(websocket: WebSocket, session_id: str, data: dict):
         user_msg = ChatMessage(session_id=sid, role="user", content=content)
         db.add(user_msg)
         await db.commit()
+        await db.refresh(user_msg)
 
         # Get conversation history
         result = await db.execute(
@@ -54,6 +77,8 @@ async def _handle_chat_send(websocket: WebSocket, session_id: str, data: dict):
             *history,
         ]
         full_response = ""
+        assistant_metadata: dict = {}
+        error_event: dict | None = None
         try:
             async for token in ai_service.chat_stream(messages_with_system, role="chat"):
                 full_response += token
@@ -63,22 +88,41 @@ async def _handle_chat_send(websocket: WebSocket, session_id: str, data: dict):
                 }))
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
-            full_response = "Sorry, something went wrong. Please try again."
-            error_data: dict = {"message": str(e)}
-            if isinstance(e, AIServiceError) and e.error_code:
-                error_data["error_code"] = e.error_code
-            await websocket.send_text(json.dumps({
-                "event": "error",
-                "data": error_data,
-            }))
+            error_event = _build_chat_error_payload(e)
+            error_summary = error_event["summary"]
+            if full_response.strip():
+                full_response = f"{full_response.rstrip()}\n\n{error_summary}"
+            else:
+                full_response = error_summary
+            assistant_metadata = {
+                "status": "failed",
+                "error_code": error_event["error_code"],
+                "status_code": error_event["status_code"],
+                "error_detail": error_event["message"],
+                "retryable": error_event["retryable"],
+                "reply_to_user_message_id": user_msg.id,
+            }
 
         # Save assistant message
         assistant_msg = ChatMessage(
-            session_id=sid, role="assistant", content=full_response,
+            session_id=sid,
+            role="assistant",
+            content=full_response,
+            metadata_=assistant_metadata,
         )
         db.add(assistant_msg)
         await db.commit()
         await db.refresh(assistant_msg)
+
+        if error_event:
+            await websocket.send_text(json.dumps({
+                "event": "error",
+                "data": {
+                    **error_event,
+                    "scope": "chat",
+                    "message_id": assistant_msg.id,
+                },
+            }))
 
         await websocket.send_text(json.dumps({
             "event": "chat_complete",
@@ -88,6 +132,7 @@ async def _handle_chat_send(websocket: WebSocket, session_id: str, data: dict):
                     "session_id": sid,
                     "role": "assistant",
                     "content": full_response,
+                    "metadata": assistant_msg.metadata_ or {},
                     "created_at": assistant_msg.created_at.isoformat(),
                 },
             },

@@ -10,7 +10,7 @@ from app.analysis.charts import theme_all_charts
 from app.analysis.network import run_coauthor_network, run_keyword_network
 from app.analysis.trend_detection import run_trend_analysis
 from app.core.events import event_bus
-from app.db.models import AnalysisRun, Paper
+from app.db.models import AnalysisRun, AppSetting, Paper
 from app.services.ai_service import ai_service
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 class AnalystAgent:
     """Performs bibliometric analysis and generates AI interpretations."""
+
+    @staticmethod
+    async def _resolve_output_language(db: AsyncSession) -> str:
+        setting = await db.get(AppSetting, "output_language")
+        return setting.value if setting and setting.value else "zh-CN"
 
     async def run_analysis(
         self,
@@ -45,12 +50,14 @@ class AnalystAgent:
             return
 
         analysis_type = analysis_run.analysis_type
+        output_language = await self._resolve_output_language(db)
 
         await event_bus.emit("analysis_progress", {
             "run_id": analysis_run.id,
             "step": "computing",
             "progress": 0.2,
-        })
+            "analysis_type": analysis_type,
+        }, session_id=str(analysis_run.session_id))
 
         # Compute metrics based on type
         if analysis_type == "bibliometrics":
@@ -75,10 +82,11 @@ class AnalystAgent:
             "run_id": analysis_run.id,
             "step": "ai_interpretation",
             "progress": 0.7,
-        })
+            "analysis_type": analysis_type,
+        }, session_id=str(analysis_run.session_id))
 
         # AI interpretation
-        interpretation = await self._interpret(analysis_type, results, papers)
+        interpretation = await self._interpret(analysis_type, results, papers, output_language)
 
         analysis_run.results = results
         analysis_run.chart_configs = charts
@@ -92,9 +100,10 @@ class AnalystAgent:
             "run_id": analysis_run.id,
             "step": "completed",
             "progress": 1.0,
-        })
+            "analysis_type": analysis_type,
+        }, session_id=str(analysis_run.session_id))
 
-    async def _interpret(self, analysis_type: str, results: dict, papers) -> str:
+    async def _interpret(self, analysis_type: str, results: dict, papers, output_language: str) -> str:
         """Generate AI interpretation of analysis results."""
         summary = f"Analysis type: {analysis_type}\n"
         summary += f"Total papers: {len(papers)}\n"
@@ -103,6 +112,7 @@ class AnalystAgent:
         if len(results_str) > 3000:
             results_str = results_str[:3000] + "..."
         summary += f"Key metrics: {results_str}"
+        language_instruction = "Write the interpretation in Simplified Chinese." if output_language.startswith("zh") else "Write the interpretation in English."
 
         messages = [
             {
@@ -112,7 +122,8 @@ class AnalystAgent:
                     "interpretation of bibliometric analysis results. "
                     "Highlight: key trends, notable findings, research gaps, and implications. "
                     "Use clear academic prose with bullet points for key takeaways. "
-                    "Keep the interpretation to 300-500 words."
+                    "Keep the interpretation to 300-500 words. "
+                    f"{language_instruction}"
                 ),
             },
             {"role": "user", "content": f"Please interpret these analysis results:\n\n{summary}"},
@@ -122,7 +133,7 @@ class AnalystAgent:
             return await ai_service.chat(messages, role="analyst", temperature=0.5)
         except Exception as e:
             logger.error(f"AI interpretation failed: {e}")
-            return "AI interpretation unavailable."
+            return "AI interpretation unavailable." if not output_language.startswith("zh") else "AI 解读暂时不可用。"
 
 
 analyst_agent = AnalystAgent()

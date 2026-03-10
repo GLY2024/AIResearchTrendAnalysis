@@ -1,5 +1,16 @@
 import axios from 'axios'
-import type { Session, ChatMessage, SearchPlan, Paper, AnalysisRun, Report, AppSetting } from '@/types'
+import type {
+  Session,
+  ChatMessage,
+  SearchPlan,
+  Paper,
+  PaperListPage,
+  AnalysisRun,
+  Report,
+  AppSetting,
+  SnowballRun,
+  SnowballCandidate,
+} from '@/types'
 import { getApiBaseUrl, markBackendOffline, markBackendOnline, isBackendOfflineError } from '@/composables/useBackend'
 
 const api = axios.create({
@@ -48,6 +59,10 @@ export const chatApi = {
     api.get<ChatMessage[]>(`/chat/${sessionId}/messages`).then(r => r.data),
   send: (data: { session_id: number; content: string }) =>
     api.post<ChatMessage>('/chat/send', data).then(r => r.data),
+  retryMessage: (messageId: number) =>
+    api.post<ChatMessage>(`/chat/messages/${messageId}/retry`).then(r => r.data),
+  deleteMessage: (messageId: number) =>
+    api.delete(`/chat/messages/${messageId}`),
 }
 
 // Search
@@ -56,20 +71,28 @@ export const searchApi = {
     api.get<SearchPlan[]>('/search/plans', { params: { session_id: sessionId } }).then(r => r.data),
   getPlan: (planId: number) =>
     api.get<SearchPlan>(`/search/plans/${planId}`).then(r => r.data),
-  planAction: (planId: number, action: string) =>
-    api.post<SearchPlan>(`/search/plans/${planId}/action`, { action }).then(r => r.data),
+  planAction: (planId: number, action: string, planData?: Record<string, unknown>) =>
+    api.post<SearchPlan>(`/search/plans/${planId}/action`, { action, plan_data: planData }).then(r => r.data),
+  listSnowballRuns: (sessionId: number) =>
+    api.get<SnowballRun[]>('/search/snowball-runs', { params: { session_id: sessionId } }).then(r => r.data),
+  getSnowballRun: (runId: number) =>
+    api.get<SnowballRun>(`/search/snowball-runs/${runId}`).then(r => r.data),
+  listSnowballCandidates: (runId: number, params?: Record<string, unknown>) =>
+    api.get<SnowballCandidate[]>(`/search/snowball-runs/${runId}/candidates`, { params }).then(r => r.data),
+  snowballAction: (runId: number, data: { action: string; config?: Record<string, unknown>; candidate_ids?: number[] }) =>
+    api.post<SnowballRun>(`/search/snowball-runs/${runId}/action`, data).then(r => r.data),
 }
 
 // Papers
 export const paperApi = {
   list: (sessionId: number, params?: Record<string, unknown>) =>
-    api.get<Paper[]>('/papers', { params: { session_id: sessionId, ...params } }).then(r => r.data),
+    api.get<PaperListPage>('/papers', { params: { session_id: sessionId, ...params } }).then(r => r.data),
   get: (id: number) => api.get<Paper>(`/papers/${id}`).then(r => r.data),
   update: (id: number, data: Partial<Paper>) =>
     api.patch<Paper>(`/papers/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/papers/${id}`),
-  count: (sessionId: number) =>
-    api.get<{ count: number }>('/papers/count', { params: { session_id: sessionId } }).then(r => r.data),
+  count: (sessionId: number, params?: Record<string, unknown>) =>
+    api.get<{ count: number }>('/papers/count', { params: { session_id: sessionId, ...params } }).then(r => r.data),
   sources: (sessionId: number) =>
     api.get<{ sources: string[]; discovery_methods: string[] }>('/papers/sources', {
       params: { session_id: sessionId },

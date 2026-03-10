@@ -79,6 +79,13 @@ async def plan_action(plan_id: int, body: SearchPlanAction, db: AsyncSession = D
         plan.status = "rejected"
         await db.commit()
         await event_bus.emit("search_plan_rejected", {"plan_id": plan_id}, session_id=str(plan.session_id))
+    elif body.action == "modify":
+        if body.plan_data is None:
+            raise HTTPException(400, "plan_data is required for modify")
+        plan.plan_data = body.plan_data
+        plan.status = "draft"
+        await db.commit()
+        await event_bus.emit("search_plan_modified", {"plan_id": plan_id}, session_id=str(plan.session_id))
     else:
         raise HTTPException(400, f"Unknown action: {body.action}")
 

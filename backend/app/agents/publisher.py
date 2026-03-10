@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.events import event_bus
-from app.db.models import AnalysisRun, Paper, Report
+from app.db.models import AnalysisRun, AppSetting, Paper, Report
 from app.services.ai_service import ai_service
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,11 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 class PublisherAgent:
     """Generates comprehensive research trend reports."""
+
+    @staticmethod
+    async def _resolve_output_language(db: AsyncSession) -> str:
+        setting = await db.get(AppSetting, "output_language")
+        return setting.value if setting and setting.value else "zh-CN"
 
     async def generate_report(
         self,
@@ -43,12 +48,18 @@ class PublisherAgent:
             .where(AnalysisRun.status == "completed")
         )
         analyses = analyses_result.scalars().all()
+        output_language = await self._resolve_output_language(db)
+        language_instruction = (
+            "Write the report in Simplified Chinese. Keep section headings, tables, and bullet points in Chinese."
+            if output_language.startswith("zh")
+            else "Write the report in English."
+        )
 
         await event_bus.emit("report_progress", {
             "report_id": report.id,
             "step": "generating",
             "progress": 0.3,
-        })
+        }, session_id=str(report.session_id))
 
         # Build context for AI
         paper_summaries = "\n".join([
@@ -67,6 +78,7 @@ class PublisherAgent:
             system_prompt = jinja_env.get_template("publisher_system.j2").render()
         except Exception:
             system_prompt = "You are a research report writer. Generate a comprehensive Markdown report about research trends."
+        system_prompt = f"{system_prompt}\n\n{language_instruction}"
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -80,7 +92,8 @@ class PublisherAgent:
 **Analysis Results:**
 {analysis_summaries}
 
-Write a comprehensive report in Markdown format.""",
+Write a comprehensive report in Markdown format.
+Ensure the final output language is {output_language}.""",
             },
         ]
 
@@ -92,9 +105,9 @@ Write a comprehensive report in Markdown format.""",
                     "report_id": report.id,
                     "step": "streaming",
                     "token": token,
-                })
+                }, session_id=str(report.session_id))
 
-            report.title = self._extract_title(content)
+            report.title = self._extract_title(content, output_language)
             report.content_markdown = content
             report.chart_configs = [a.chart_configs for a in analyses if a.chart_configs]
             report.status = "completed"
@@ -109,15 +122,15 @@ Write a comprehensive report in Markdown format.""",
             "report_id": report.id,
             "step": "completed",
             "progress": 1.0,
-        })
+        }, session_id=str(report.session_id))
 
-    def _extract_title(self, content: str) -> str:
+    def _extract_title(self, content: str, output_language: str) -> str:
         """Extract title from first heading."""
         for line in content.split("\n"):
             line = line.strip()
             if line.startswith("# "):
                 return line[2:].strip()
-        return "Research Trend Report"
+        return "研究趋势报告" if output_language.startswith("zh") else "Research Trend Report"
 
 
 publisher_agent = PublisherAgent()

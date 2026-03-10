@@ -1,7 +1,7 @@
 """Common Pydantic schemas for API request/response."""
 
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --- Sessions ---
@@ -41,9 +41,10 @@ class ChatMessageResponse(BaseModel):
     session_id: int
     role: str
     content: str
+    metadata: dict = Field(default_factory=dict, validation_alias="metadata_")
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Search Plans ---
@@ -60,6 +61,7 @@ class SearchPlanResponse(BaseModel):
 
 class SearchPlanAction(BaseModel):
     action: str  # approve, reject, modify
+    plan_data: dict | None = None
 
 
 # --- Papers ---
@@ -86,6 +88,13 @@ class PaperResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PaperListResponse(BaseModel):
+    items: list[PaperResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 class PaperUpdate(BaseModel):

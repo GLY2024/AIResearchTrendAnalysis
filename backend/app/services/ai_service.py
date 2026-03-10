@@ -4,7 +4,7 @@ import logging
 import os
 from typing import AsyncGenerator
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI, AuthenticationError, RateLimitError
 
 from app.config import settings
 from app.core.exceptions import AIServiceError
@@ -29,6 +29,26 @@ Guidelines:
 - Provide academic context and domain knowledge
 - Use markdown formatting for readability
 - Reference relevant concepts, methods, and subfields"""
+
+
+def _status_error_code(status_code: int | None) -> str:
+    if status_code == 400:
+        return "bad_request"
+    if status_code == 401:
+        return "authentication_error"
+    if status_code == 403:
+        return "forbidden"
+    if status_code == 404:
+        return "model_not_found"
+    if status_code == 408:
+        return "timeout"
+    if status_code == 409:
+        return "conflict"
+    if status_code == 429:
+        return "rate_limited"
+    if status_code and status_code >= 500:
+        return "provider_error"
+    return "ai_error"
 
 
 class AIService:
@@ -135,7 +155,11 @@ class AIService:
 
         cfg = self._PROVIDER_DEFAULTS.get(provider)
         if not cfg:
-            raise AIServiceError(f"Unknown provider: {provider}")
+            raise AIServiceError(
+                f"Unknown provider: {provider}",
+                error_code="unknown_provider",
+                retryable=False,
+            )
 
         base_url = (self._db_settings.get(cfg["base_url_key"]) or cfg["base_url"]).rstrip("/")
         api_key = self._db_settings.get(cfg["api_key_key"])
@@ -144,6 +168,8 @@ class AIService:
                 f"No API key configured for provider '{provider}'. "
                 f"Please go to Settings and configure your API key.",
                 error_code="no_api_key",
+                status_code=400,
+                retryable=False,
             )
 
         client = AsyncOpenAI(base_url=base_url, api_key=api_key, max_retries=SDK_MAX_RETRIES)
@@ -151,11 +177,57 @@ class AIService:
         logger.info(f"Created OpenAI client for provider={provider}, base_url={base_url}")
         return client
 
+    def _wrap_provider_error(self, exc: Exception, *, provider: str, model: str, operation: str) -> AIServiceError:
+        if isinstance(exc, AIServiceError):
+            return exc
+
+        if isinstance(exc, AuthenticationError):
+            return AIServiceError(
+                f"{provider} rejected the configured credentials while trying to {operation} with model '{model}'.",
+                error_code="authentication_error",
+                status_code=401,
+                retryable=False,
+            )
+
+        if isinstance(exc, RateLimitError):
+            return AIServiceError(
+                f"{provider} rate-limited the request for model '{model}'. Try again shortly or switch to another model.",
+                error_code="rate_limited",
+                status_code=429,
+                retryable=True,
+            )
+
+        if isinstance(exc, APIConnectionError):
+            return AIServiceError(
+                f"Could not reach {provider} while trying to {operation} with model '{model}'. Check the base URL and network connectivity.",
+                error_code="connection_error",
+                retryable=True,
+            )
+
+        if isinstance(exc, APIStatusError):
+            status_code = exc.status_code or getattr(exc.response, "status_code", None)
+            return AIServiceError(
+                f"{provider} returned HTTP {status_code} while trying to {operation} with model '{model}': {exc}",
+                error_code=_status_error_code(status_code),
+                status_code=status_code,
+                retryable=status_code is None or status_code >= 500 or status_code == 429,
+            )
+
+        return AIServiceError(
+            f"{provider} failed while trying to {operation} with model '{model}': {exc}",
+            error_code="ai_error",
+            retryable=True,
+        )
+
     def _get_model_config(self, role: str) -> tuple[AsyncOpenAI, str]:
         """Resolve client + model name for a given role. Returns (client, model_name)."""
         attr = self.ROLE_MODEL_MAP.get(role)
         if not attr:
-            raise AIServiceError(f"Unknown AI role: '{role}'. Valid: {list(self.ROLE_MODEL_MAP.keys())}")
+            raise AIServiceError(
+                f"Unknown AI role: '{role}'. Valid: {list(self.ROLE_MODEL_MAP.keys())}",
+                error_code="unknown_role",
+                retryable=False,
+            )
         model = self._model_overrides.get(attr, getattr(settings, attr))
         provider = self._provider_overrides.get(attr, "openai")
 
@@ -172,6 +244,7 @@ class AIService:
     ) -> str:
         """Non-streaming chat completion (SDK handles retries via max_retries)."""
         client, model = self._get_model_config(role)
+        provider = self._provider_overrides.get(self.ROLE_MODEL_MAP[role], "openai")
         try:
             response = await client.chat.completions.create(
                 model=model,
@@ -182,7 +255,7 @@ class AIService:
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"AI chat error ({model}): {e}")
-            raise AIServiceError(f"AI request failed: {e}")
+            raise self._wrap_provider_error(e, provider=provider, model=model, operation="complete the request") from e
 
     async def chat_stream(
         self,
@@ -193,6 +266,7 @@ class AIService:
     ) -> AsyncGenerator[str, None]:
         """Streaming chat completion."""
         client, model = self._get_model_config(role)
+        provider = self._provider_overrides.get(self.ROLE_MODEL_MAP[role], "openai")
         try:
             stream = await client.chat.completions.create(
                 model=model,
@@ -207,7 +281,7 @@ class AIService:
                     yield delta.content
         except Exception as e:
             logger.error(f"AI stream error ({model}): {e}")
-            raise AIServiceError(f"AI stream failed: {e}")
+            raise self._wrap_provider_error(e, provider=provider, model=model, operation="stream a response") from e
 
     async def function_call(
         self,
@@ -218,6 +292,7 @@ class AIService:
     ) -> dict:
         """Chat completion with function calling / tools."""
         client, model = self._get_model_config(role)
+        provider = self._provider_overrides.get(self.ROLE_MODEL_MAP[role], "openai")
         try:
             response = await client.chat.completions.create(
                 model=model,
@@ -242,7 +317,7 @@ class AIService:
             }
         except Exception as e:
             logger.error(f"AI function call error ({model}): {e}")
-            raise AIServiceError(f"AI function call failed: {e}")
+            raise self._wrap_provider_error(e, provider=provider, model=model, operation="call tools") from e
 
 
 ai_service = AIService()

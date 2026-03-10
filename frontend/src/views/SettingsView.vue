@@ -1,14 +1,12 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { settingsApi } from '@/composables/useApi'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
 
-// --- Types ---
 interface Provider {
   id: string
   name: string
   description: string
-  icon: string
   fields: {
     apiKey: string
     baseUrl: string
@@ -20,13 +18,24 @@ interface Provider {
 
 interface ProviderState {
   apiKey: string
+  storedKeyMask: string
   baseUrl: string
-  enabled: boolean
+  hasStoredKey: boolean
   testing: boolean
   testResult: { ok: boolean; message: string } | null
   saving: boolean
   dirty: boolean
   collapsed: boolean
+}
+
+interface ExtraKeyState {
+  key: string
+  label: string
+  value: string
+  storedValueMask: string
+  hasStoredValue: boolean
+  saving: boolean
+  dirty: boolean
 }
 
 interface ModelRole {
@@ -43,41 +52,37 @@ interface ModelRole {
   showCustom: boolean
 }
 
-// --- Provider definitions ---
 const providers: Provider[] = [
   {
     id: 'openai',
-    name: 'OpenAI',
-    description: 'GPT-4o, GPT-4o-mini and compatible APIs (DeepBricks, vLLM, etc.)',
-    icon: '🟢',
+    name: 'OpenAI compatible',
+    description: 'OpenAI, DeepBricks, vLLM, and any endpoint that speaks the OpenAI API.',
     fields: { apiKey: 'openai_api_key', baseUrl: 'openai_base_url' },
     defaults: { baseUrl: 'https://api.openai.com/v1' },
   },
   {
     id: 'anthropic',
-    name: 'Anthropic',
-    description: 'Claude Opus, Sonnet, Haiku and compatible APIs',
-    icon: '🟠',
+    name: 'Anthropic compatible',
+    description: 'Claude family endpoints and Anthropic-compatible gateways.',
     fields: { apiKey: 'anthropic_api_key', baseUrl: 'anthropic_base_url' },
     defaults: { baseUrl: 'https://api.anthropic.com/v1' },
   },
   {
     id: 'openrouter',
     name: 'OpenRouter',
-    description: 'Access 200+ models via unified API (OpenAI, Google, Meta, etc.)',
-    icon: '🔀',
+    description: 'Route across multiple frontier and open models with a single API key.',
     fields: { apiKey: 'openrouter_api_key', baseUrl: 'openrouter_base_url' },
     defaults: { baseUrl: 'https://openrouter.ai/api/v1' },
   },
 ]
 
-// --- State ---
 const providerStates = reactive<Record<string, ProviderState>>({})
-for (const p of providers) {
-  providerStates[p.id] = {
+for (const provider of providers) {
+  providerStates[provider.id] = {
     apiKey: '',
-    baseUrl: p.defaults.baseUrl,
-    enabled: false,
+    storedKeyMask: '',
+    baseUrl: provider.defaults.baseUrl,
+    hasStoredKey: false,
     testing: false,
     testResult: null,
     saving: false,
@@ -87,71 +92,126 @@ for (const p of providers) {
 }
 
 function makeRole(key: string, label: string, description: string): ModelRole {
-  return { key, label, description, value: '', provider: '', saving: false, dirty: false, modelOptions: [], loadingModels: false, modelError: '', showCustom: false }
+  return {
+    key,
+    label,
+    description,
+    value: '',
+    provider: '',
+    saving: false,
+    dirty: false,
+    modelOptions: [],
+    loadingModels: false,
+    modelError: '',
+    showCustom: false,
+  }
 }
 
 const modelRoles = ref<ModelRole[]>([
-  makeRole('model_chat', 'Chat', 'General conversation and research discussion'),
-  makeRole('model_planner', 'Planner', 'Search strategy and plan generation'),
-  makeRole('model_analyst', 'Analyst', 'Data analysis and interpretation'),
-  makeRole('model_publisher', 'Publisher', 'Report writing and formatting'),
-  makeRole('model_executor', 'Executor', 'Search execution and tool calling'),
+  makeRole('model_chat', 'Chat', 'General conversation and topic framing'),
+  makeRole('model_planner', 'Planner', 'Search strategy and query design'),
+  makeRole('model_analyst', 'Analyst', 'Interpretation of charts and patterns'),
+  makeRole('model_publisher', 'Publisher', 'Report drafting and structure'),
+  makeRole('model_executor', 'Executor', 'Search execution and tool-facing work'),
 ])
 
-const extraKeys = ref<{ key: string; label: string; value: string; saving: boolean; dirty: boolean }[]>([
-  { key: 'scopus_api_key', label: 'Scopus API Key', value: '', saving: false, dirty: false },
+const extraKeys = ref<ExtraKeyState[]>([
+  { key: 'scopus_api_key', label: 'Scopus API key', value: '', storedValueMask: '', hasStoredValue: false, saving: false, dirty: false },
 ])
 
 const loaded = ref(false)
 const backendState = useBackendState()
 const pageError = ref('')
 const showOnboarding = ref(false)
+const outputLanguage = ref<'zh-CN' | 'en-US'>('zh-CN')
+const outputLanguageDirty = ref(false)
+const outputLanguageSaving = ref(false)
+
+const configuredProvidersCount = () => providers.filter((provider) => providerState(provider.id).hasStoredKey).length
+const assignedRolesCount = () => modelRoles.value.filter((role) => role.provider && role.value).length
+const configuredSourceKeysCount = () => extraKeys.value.filter((key) => key.hasStoredValue).length
 
 function providerState(providerId: string): ProviderState {
   return providerStates[providerId]!
 }
 
-// --- Load settings from backend ---
+function resetProviderState(provider: Provider) {
+  const state = providerState(provider.id)
+  state.apiKey = ''
+  state.storedKeyMask = ''
+  state.baseUrl = provider.defaults.baseUrl
+  state.hasStoredKey = false
+  state.testing = false
+  state.testResult = null
+  state.saving = false
+  state.dirty = false
+  state.collapsed = false
+}
+
 async function loadSettings() {
   pageError.value = ''
   try {
     const settings = await settingsApi.list()
-    const map = new Map(settings.map((s: { key: string; value: string }) => [s.key, s.value]))
+    const map = new Map(settings.map((setting: { key: string; value: string }) => [setting.key, setting.value]))
 
     let hasAnyKey = false
-    for (const p of providers) {
-      const state = providerState(p.id)
-      const key = map.get(p.fields.apiKey)
-      const url = map.get(p.fields.baseUrl)
-      if (key) { state.apiKey = key; state.enabled = true; hasAnyKey = true; state.collapsed = true }
-      if (url) state.baseUrl = url
+    for (const provider of providers) {
+      resetProviderState(provider)
+      const state = providerState(provider.id)
+      const apiKey = map.get(provider.fields.apiKey)
+      const baseUrl = map.get(provider.fields.baseUrl)
+
+      if (apiKey) {
+        state.storedKeyMask = apiKey
+        state.hasStoredKey = true
+        state.collapsed = true
+        hasAnyKey = true
+      }
+      if (baseUrl) state.baseUrl = baseUrl
     }
 
     for (const role of modelRoles.value) {
-      const v = map.get(role.key)
-      if (v) role.value = v
-      const pv = map.get(`${role.key}_provider`)
-      if (pv) role.provider = pv
+      const value = map.get(role.key)
+      if (value) role.value = value
+      const providerValue = map.get(`${role.key}_provider`)
+      if (providerValue) role.provider = providerValue
     }
 
-    for (const ek of extraKeys.value) {
-      const v = map.get(ek.key)
-      if (v) ek.value = v
+    for (const extraKey of extraKeys.value) {
+      const value = map.get(extraKey.key)
+      extraKey.value = ''
+      extraKey.storedValueMask = value ?? ''
+      extraKey.hasStoredValue = Boolean(value)
+      extraKey.dirty = false
     }
+
+    outputLanguage.value = (map.get('output_language') as 'zh-CN' | 'en-US') || 'zh-CN'
+    outputLanguageDirty.value = false
 
     showOnboarding.value = !hasAnyKey
+
+    for (const role of modelRoles.value) {
+      if (role.provider) void fetchModelsForRole(role)
+    }
   } catch (err) {
-    console.error('[ARTA:Settings] Failed to load settings:', err)
     pageError.value = err instanceof Error ? err.message : 'Failed to load settings.'
     await checkBackend(true)
+  } finally {
+    loaded.value = true
   }
-  loaded.value = true
 }
 
-// --- Save provider ---
+function applyDeepBricksPreset() {
+  const state = providerState('openai')
+  state.baseUrl = 'https://api.deepbricks.ai/v1'
+  state.dirty = true
+  state.collapsed = false
+}
+
 async function saveProvider(providerId: string) {
-  const p = providers.find(x => x.id === providerId)!
+  const provider = providers.find((item) => item.id === providerId)!
   const state = providerState(providerId)
+
   pageError.value = ''
   if (backendState.status !== 'online') {
     pageError.value = getBackendOfflineMessage('provider settings')
@@ -160,16 +220,24 @@ async function saveProvider(providerId: string) {
 
   state.saving = true
   try {
-    if (state.apiKey && !state.apiKey.includes('***')) {
-      await settingsApi.update({ key: p.fields.apiKey, value: state.apiKey, is_sensitive: true })
+    const trimmedApiKey = state.apiKey.trim()
+    if (!trimmedApiKey && !state.hasStoredKey) {
+      pageError.value = `Enter an API key before saving ${provider.name}.`
+      return
     }
-    await settingsApi.update({ key: p.fields.baseUrl, value: state.baseUrl })
+
+    if (trimmedApiKey) {
+      const response = await settingsApi.update({ key: provider.fields.apiKey, value: trimmedApiKey, is_sensitive: true })
+      state.storedKeyMask = response.value
+      state.hasStoredKey = true
+      state.apiKey = ''
+    }
+
+    await settingsApi.update({ key: provider.fields.baseUrl, value: state.baseUrl })
     state.dirty = false
-    state.enabled = true
+    state.testResult = null
     showOnboarding.value = false
-    console.log(`[ARTA:Settings] Saved provider ${providerId}`)
   } catch (err) {
-    console.error(`[ARTA:Settings] Failed to save provider ${providerId}:`, err)
     pageError.value = err instanceof Error ? err.message : `Failed to save provider ${providerId}.`
     await checkBackend(true)
   } finally {
@@ -177,53 +245,69 @@ async function saveProvider(providerId: string) {
   }
 }
 
-// --- Test connection ---
 async function testProvider(providerId: string) {
-  const p = providers.find(x => x.id === providerId)!
+  const provider = providers.find((item) => item.id === providerId)!
   const state = providerState(providerId)
+
   pageError.value = ''
   state.testing = true
   state.testResult = null
 
   try {
-    const apiKey = state.apiKey
-
-    if (!apiKey || apiKey.includes('***')) {
-      state.testResult = { ok: false, message: 'Please enter a valid API key first' }
-      return
-    }
-
     if (backendState.status !== 'online') {
       state.testResult = { ok: false, message: getBackendOfflineMessage('API key validation') }
       return
     }
 
-    const resp = await settingsApi.validate({
-      key: p.fields.apiKey,
-      value: apiKey,
-      base_url: state.baseUrl,
-    })
+    const trimmedApiKey = state.apiKey.trim()
+    if (trimmedApiKey) {
+      const response = await settingsApi.validate({
+        key: provider.fields.apiKey,
+        value: trimmedApiKey,
+        base_url: state.baseUrl,
+      })
 
+      state.testResult = {
+        ok: response.valid,
+        message: response.message,
+      }
+      return
+    }
+
+    if (!state.hasStoredKey) {
+      state.testResult = { ok: false, message: 'Enter a fresh API key before testing the connection.' }
+      return
+    }
+
+    const response = await settingsApi.fetchModels(providerId)
     state.testResult = {
-      ok: resp.valid,
-      message: resp.message,
+      ok: !response.error,
+      message: response.error ? response.error : `Connection looks healthy. ${response.models.length} models discovered.`,
     }
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    state.testResult = { ok: false, message: `Connection failed: ${msg}` }
+    const message = err instanceof Error ? err.message : String(err)
+    state.testResult = { ok: false, message: `Connection failed: ${message}` }
     await checkBackend(true)
   } finally {
     state.testing = false
   }
 }
 
-// --- Save model role ---
 async function saveModelRole(role: ModelRole) {
   pageError.value = ''
   if (backendState.status !== 'online') {
     pageError.value = getBackendOfflineMessage('model assignment updates')
     return
   }
+  if (!role.provider) {
+    pageError.value = 'Choose a provider before saving this model assignment.'
+    return
+  }
+  if (!providerState(role.provider).hasStoredKey) {
+    pageError.value = 'Save the provider API key before assigning models.'
+    return
+  }
+
   role.saving = true
   try {
     await Promise.all([
@@ -231,9 +315,7 @@ async function saveModelRole(role: ModelRole) {
       settingsApi.update({ key: `${role.key}_provider`, value: role.provider }),
     ])
     role.dirty = false
-    console.log(`[ARTA:Settings] Saved model role ${role.key} = ${role.provider}/${role.value}`)
   } catch (err) {
-    console.error(`[ARTA:Settings] Failed to save model role ${role.key}:`, err)
     pageError.value = err instanceof Error ? err.message : `Failed to save ${role.key}.`
     await checkBackend(true)
   } finally {
@@ -241,10 +323,10 @@ async function saveModelRole(role: ModelRole) {
   }
 }
 
-// Apply same model to all roles
 function applyToAllRoles() {
-  const first = modelRoles.value[0]!
-  if (!first?.provider || !first?.value) return
+  const first = modelRoles.value[0]
+  if (!first?.provider || !first.value) return
+
   for (const role of modelRoles.value.slice(1)) {
     role.provider = first.provider
     role.value = first.value
@@ -252,49 +334,85 @@ function applyToAllRoles() {
   }
 }
 
-// Fetch models for a role's selected provider
 async function fetchModelsForRole(role: ModelRole) {
   if (!role.provider) {
     role.modelOptions = []
+    role.modelError = ''
     return
   }
+  if (!providerState(role.provider).hasStoredKey) {
+    role.modelOptions = []
+    role.modelError = 'Save this provider before fetching its model list.'
+    return
+  }
+
   role.loadingModels = true
   role.modelError = ''
   role.modelOptions = []
   try {
-    const resp = await settingsApi.fetchModels(role.provider)
-    role.modelOptions = resp.models
-    if (resp.error) role.modelError = resp.error
+    const response = await settingsApi.fetchModels(role.provider)
+    role.modelOptions = response.models
+    if (response.error) role.modelError = response.error
+    if (role.value && !response.models.find((model) => model.id === role.value)) {
+      role.showCustom = true
+    }
   } catch (err) {
-    role.modelError = err instanceof Error ? err.message : 'Failed to fetch models'
+    role.modelError = err instanceof Error ? err.message : 'Failed to fetch models.'
     role.modelOptions = []
   } finally {
     role.loadingModels = false
   }
 }
 
-// Computed: list of enabled provider ids
 function enabledProviders() {
-  return providers.filter(p => providerState(p.id).enabled)
+  return providers.filter((provider) => providerState(provider.id).hasStoredKey)
 }
 
-// --- Save extra key ---
-async function saveExtraKey(ek: { key: string; value: string; saving: boolean; dirty: boolean }) {
+async function saveExtraKey(extraKey: ExtraKeyState) {
   pageError.value = ''
   if (backendState.status !== 'online') {
     pageError.value = getBackendOfflineMessage('data source key updates')
     return
   }
-  ek.saving = true
+
+  extraKey.saving = true
   try {
-    await settingsApi.update({ key: ek.key, value: ek.value, is_sensitive: true })
-    ek.dirty = false
+    const trimmedValue = extraKey.value.trim()
+    if (!trimmedValue && !extraKey.hasStoredValue) {
+      pageError.value = `Enter ${extraKey.label} before saving.`
+      return
+    }
+    if (trimmedValue) {
+      const response = await settingsApi.update({ key: extraKey.key, value: trimmedValue, is_sensitive: true })
+      extraKey.storedValueMask = response.value
+      extraKey.hasStoredValue = true
+      extraKey.value = ''
+    }
+    extraKey.dirty = false
   } catch (err) {
-    console.error(`[ARTA:Settings] Failed to save ${ek.key}:`, err)
-    pageError.value = err instanceof Error ? err.message : `Failed to save ${ek.key}.`
+    pageError.value = err instanceof Error ? err.message : `Failed to save ${extraKey.key}.`
     await checkBackend(true)
   } finally {
-    ek.saving = false
+    extraKey.saving = false
+  }
+}
+
+async function saveOutputLanguage() {
+  pageError.value = ''
+  if (backendState.status !== 'online') {
+    pageError.value = getBackendOfflineMessage('output defaults')
+    return
+  }
+
+  outputLanguageSaving.value = true
+  try {
+    await settingsApi.update({ key: 'output_language', value: outputLanguage.value })
+    outputLanguageDirty.value = false
+  } catch (err) {
+    pageError.value = err instanceof Error ? err.message : 'Failed to save output language.'
+    await checkBackend(true)
+  } finally {
+    outputLanguageSaving.value = false
   }
 }
 
@@ -302,183 +420,198 @@ onMounted(loadSettings)
 </script>
 
 <template>
-  <div class="max-w-3xl">
-    <h1 class="text-xl font-semibold text-[var(--text-primary)] mb-1">Settings</h1>
-    <p class="text-sm text-[var(--text-secondary)] mb-6">
-      Configure LLM providers, model assignments, and API keys.
-    </p>
+  <div class="space-y-6">
+    <section class="page-hero">
+      <div class="page-hero__kicker">Configuration</div>
+      <h2 class="page-hero__title">Control providers, models, and keys from one coherent panel.</h2>
+      <p class="page-hero__copy">
+        I restructured this page to make the setup story easier to explain: provider access first, model routing second, external source keys last.
+      </p>
 
-    <!-- Onboarding banner -->
-    <div
-      v-if="showOnboarding"
-      class="mb-6 glass-card p-5 border-[var(--accent-primary)]/30"
-    >
-      <div class="flex items-start gap-4">
-        <div class="w-10 h-10 rounded-xl bg-[var(--accent-primary)]/20 flex items-center justify-center shrink-0">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" stroke-width="2" stroke-linecap="round">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-          </svg>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <span class="stat-card__label">Configured providers</span>
+          <span class="stat-card__value">{{ configuredProvidersCount() }}</span>
+          <span class="stat-card__hint">Provider slots with a saved key or endpoint</span>
         </div>
-        <div class="flex-1">
-          <h3 class="text-sm font-semibold text-[var(--text-primary)] mb-1">Welcome to ARTA!</h3>
-          <p class="text-xs text-[var(--text-secondary)] mb-3">
-            To get started, configure at least one LLM provider below. You'll need an API key from
-            <a href="https://platform.openai.com/api-keys" target="_blank" class="text-[var(--accent-primary)] hover:underline">OpenAI</a>,
-            <a href="https://console.anthropic.com/" target="_blank" class="text-[var(--accent-primary)] hover:underline">Anthropic</a>, or
-            <a href="https://openrouter.ai/keys" target="_blank" class="text-[var(--accent-primary)] hover:underline">OpenRouter</a>.
-          </p>
-          <button class="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]" @click="showOnboarding = false">
-            Dismiss
-          </button>
+        <div class="stat-card">
+          <span class="stat-card__label">Assigned roles</span>
+          <span class="stat-card__value">{{ assignedRolesCount() }}</span>
+          <span class="stat-card__hint">Model routes currently wired into the workflow</span>
         </div>
+        <div class="stat-card">
+          <span class="stat-card__label">Source keys</span>
+          <span class="stat-card__value">{{ configuredSourceKeysCount() }}</span>
+          <span class="stat-card__hint">Optional data source credentials already stored</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__label">State</span>
+          <span class="stat-card__value text-[1.1rem]">{{ showOnboarding ? 'Needs setup' : 'Operational' }}</span>
+          <span class="stat-card__hint">Whether the app has at least one LLM provider configured</span>
+        </div>
+      </div>
+    </section>
+
+    <div v-if="showOnboarding" class="callout callout--accent">
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div class="text-sm font-semibold text-[var(--text-primary)]">First-run setup required</div>
+          <div class="mt-1 text-sm text-[var(--text-secondary)]">
+            Configure at least one LLM provider and map a model to the workflow roles below.
+          </div>
+        </div>
+        <span class="capsule">Start with OpenAI-compatible or OpenRouter</span>
+      </div>
+    </div>
+
+    <div class="callout callout--warm">
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div class="text-sm font-semibold text-[var(--text-primary)]">DeepBricks quick preset</div>
+          <div class="mt-1 text-sm text-[var(--text-secondary)]">
+            If you want me to debug against DeepBricks later, I will use the OpenAI-compatible slot with base URL
+            <code class="rounded bg-black/20 px-1.5 py-0.5">https://api.deepbricks.ai/v1</code>.
+          </div>
+        </div>
+        <button class="glass-btn glass-btn-warm" @click="applyDeepBricksPreset">
+          Apply DeepBricks base URL
+        </button>
       </div>
     </div>
 
     <div
       v-if="pageError"
-      class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
+      class="callout border border-[var(--error)]/25 bg-[var(--error)]/10 text-sm text-[var(--error)]"
     >
       {{ pageError }}
     </div>
 
-    <!-- Loading skeleton -->
     <div v-if="!loaded" class="space-y-4">
-      <div v-for="i in 2" :key="i" class="h-48 rounded-xl bg-[var(--glass-bg)] animate-pulse" />
+      <div v-for="index in 2" :key="index" class="h-48 rounded-[28px] bg-white/[0.04] animate-pulse" />
     </div>
 
     <template v-else>
-      <!-- ==================== PROVIDERS ==================== -->
-      <section class="mb-8">
-        <h2 class="text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-3">
-          LLM Providers
-        </h2>
+      <section class="space-y-4">
+        <div>
+          <div class="page-hero__kicker mb-3">Provider access</div>
+          <h3 class="section-heading">LLM providers</h3>
+          <p class="section-copy">Save credentials, point to a custom base URL if needed, then verify the connection before assigning models.</p>
+        </div>
 
         <div class="space-y-4">
           <div
-            v-for="p in providers"
-            :key="p.id"
-            class="rounded-xl border transition-colors"
-            :class="providerState(p.id).enabled
-              ? 'border-[var(--accent-primary)]/30 bg-[var(--accent-primary)]/5'
-              : 'border-[var(--glass-border)] bg-[var(--glass-bg)]'"
+            v-for="provider in providers"
+            :key="provider.id"
+            class="glass-card overflow-hidden"
           >
-            <!-- Provider header -->
-            <div
-              class="flex items-center gap-3 px-5 py-4 cursor-pointer"
-              :class="providerState(p.id).enabled ? 'border-b border-white/5' : ''"
-              @click="providerState(p.id).collapsed = !providerState(p.id).collapsed"
+            <button
+              class="flex w-full items-center gap-4 px-5 py-5 text-left"
+              @click="providerState(provider.id).collapsed = !providerState(provider.id).collapsed"
             >
-              <span class="text-2xl">{{ p.icon }}</span>
-              <div class="flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="font-semibold text-[var(--text-primary)]">{{ p.name }}</span>
-                  <span
-                    v-if="providerState(p.id).enabled"
-                    class="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--success)]/15 text-[var(--success)] font-medium"
-                  >
-                    CONFIGURED
-                  </span>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-base font-semibold text-[var(--text-primary)]">{{ provider.name }}</span>
+                  <span v-if="providerState(provider.id).hasStoredKey" class="badge badge-success">Configured</span>
                 </div>
-                <p class="text-xs text-[var(--text-muted)] mt-0.5">{{ p.description }}</p>
+                <p class="mt-1 text-sm leading-6 text-[var(--text-secondary)]">{{ provider.description }}</p>
+                <div class="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
+                  <span v-if="providerState(provider.id).hasStoredKey" class="capsule">Stored key {{ providerState(provider.id).storedKeyMask }}</span>
+                  <span v-else class="capsule">No key saved yet</span>
+                  <span class="capsule">{{ providerState(provider.id).baseUrl }}</span>
+                </div>
               </div>
+
               <svg
-                width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
-                class="text-[var(--text-muted)] transition-transform shrink-0"
-                :class="!providerState(p.id).collapsed ? 'rotate-180' : ''"
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                class="shrink-0 text-[var(--text-muted)] transition-transform"
+                :class="!providerState(provider.id).collapsed ? 'rotate-180' : ''"
               >
                 <path d="M4 6l4 4 4-4" />
               </svg>
-            </div>
+            </button>
 
-            <!-- Provider fields (collapsible) -->
-            <div v-if="!providerState(p.id).collapsed" class="px-5 py-4 space-y-3">
-              <!-- API Key -->
+            <div v-if="!providerState(provider.id).collapsed" class="space-y-4 border-t border-white/8 px-5 py-5">
               <div>
-                <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">API Key</label>
+                <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">API key</label>
                 <input
-                  v-model="providerState(p.id).apiKey"
+                  v-model="providerState(provider.id).apiKey"
                   type="password"
                   class="glass-input"
-                  :placeholder="providerState(p.id).enabled ? '••••••••••••••••' : 'sk-... or your API key'"
-                  @input="providerState(p.id).dirty = true; providerState(p.id).testResult = null"
+                  :placeholder="providerState(provider.id).hasStoredKey ? 'Leave blank to keep the saved key, or paste a replacement key.' : 'Paste a provider API key here'"
+                  @input="providerState(provider.id).dirty = true; providerState(provider.id).testResult = null"
                 />
+                <p v-if="providerState(provider.id).hasStoredKey" class="mt-2 text-xs text-[var(--text-muted)]">
+                  Current saved key: {{ providerState(provider.id).storedKeyMask }}
+                </p>
               </div>
 
-              <!-- Base URL -->
               <div>
-                <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+                <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">
                   Base URL
-                  <span class="text-[var(--text-muted)] font-normal ml-1">
-                    (change for local/proxy endpoints)
-                  </span>
                 </label>
                 <input
-                  v-model="providerState(p.id).baseUrl"
+                  v-model="providerState(provider.id).baseUrl"
                   type="text"
-                  class="glass-input font-mono text-xs"
-                  :placeholder="p.defaults.baseUrl"
-                  @input="providerState(p.id).dirty = true; providerState(p.id).testResult = null"
+                  class="glass-input font-mono text-sm"
+                  :placeholder="provider.defaults.baseUrl"
+                  @input="providerState(provider.id).dirty = true; providerState(provider.id).testResult = null"
                 />
               </div>
 
-              <!-- Actions -->
-              <div class="flex items-center gap-2 pt-1">
+              <div class="flex flex-wrap gap-2">
                 <button
-                  class="glass-btn glass-btn-primary text-sm"
-                  :disabled="providerState(p.id).saving || backendState.status !== 'online'"
-                  @click="saveProvider(p.id)"
+                  class="glass-btn glass-btn-primary"
+                  :disabled="providerState(provider.id).saving || backendState.status !== 'online'"
+                  @click="saveProvider(provider.id)"
                 >
-                  {{ providerState(p.id).saving ? 'Saving...' : 'Save' }}
+                  {{ providerState(provider.id).saving ? 'Saving...' : 'Save provider' }}
                 </button>
                 <button
-                  class="glass-btn text-sm"
-                  :disabled="providerState(p.id).testing || backendState.status !== 'online'"
-                  @click="testProvider(p.id)"
+                  class="glass-btn"
+                  :disabled="providerState(provider.id).testing || backendState.status !== 'online'"
+                  @click="testProvider(provider.id)"
                 >
-                  {{ providerState(p.id).testing ? 'Testing...' : 'Test Connection' }}
+                  {{ providerState(provider.id).testing ? 'Testing...' : 'Test connection' }}
                 </button>
                 <button
-                  class="glass-btn text-sm text-[var(--text-muted)]"
-                  @click="providerState(p.id).baseUrl = p.defaults.baseUrl; providerState(p.id).dirty = true"
+                  class="glass-btn"
+                  @click="providerState(provider.id).baseUrl = provider.defaults.baseUrl; providerState(provider.id).dirty = true"
                 >
                   Reset URL
                 </button>
               </div>
 
-              <!-- Test result -->
               <div
-                v-if="providerState(p.id).testResult"
-                class="flex items-start gap-2 px-3 py-2 rounded-lg text-sm"
-                :class="providerState(p.id).testResult!.ok
-                  ? 'bg-[var(--success)]/10 text-[var(--success)]'
-                  : 'bg-[var(--error)]/10 text-[var(--error)]'"
+                v-if="providerState(provider.id).testResult"
+                class="callout"
+                :class="providerState(provider.id).testResult!.ok ? 'callout--success' : 'border border-[var(--error)]/25 bg-[var(--error)]/10'"
               >
-                <span class="shrink-0 mt-0.5">{{ providerState(p.id).testResult!.ok ? '✓' : '✗' }}</span>
-                <span>{{ providerState(p.id).testResult!.message }}</span>
+                <span>{{ providerState(provider.id).testResult!.message }}</span>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- ==================== MODEL ROLES ==================== -->
-      <section class="mb-8">
-        <div class="flex items-center justify-between mb-3">
+      <section class="space-y-4">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h2 class="text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-1">
-              Model Assignments
-            </h2>
-            <p class="text-xs text-[var(--text-muted)]">
-              Select a provider and model for each role. Models are fetched from the provider's API.
-            </p>
+            <div class="page-hero__kicker mb-3">Routing</div>
+            <h3 class="section-heading">Model assignments</h3>
+            <p class="section-copy">Assign a provider and model to each stage of the pipeline. You can also use one model across all roles.</p>
           </div>
+
           <button
             v-if="modelRoles[0]?.provider && modelRoles[0]?.value"
-            class="glass-btn text-xs"
-            title="Use the Chat model for all roles"
+            class="glass-btn"
             @click="applyToAllRoles"
           >
-            Use same for all
+            Use chat model for all roles
           </button>
         </div>
 
@@ -486,139 +619,156 @@ onMounted(loadSettings)
           <div
             v-for="role in modelRoles"
             :key="role.key"
-            class="rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] px-5 py-4"
+            class="glass-card p-5"
           >
-            <div class="flex items-center gap-3 flex-wrap">
-              <!-- Role label -->
-              <div class="w-24 shrink-0">
-                <span class="text-sm font-medium text-[var(--text-primary)]">{{ role.label }}</span>
-                <p class="text-[10px] text-[var(--text-muted)] leading-tight mt-0.5">{{ role.description }}</p>
+            <div class="grid gap-4 xl:grid-cols-[220px_180px_minmax(0,1fr)_120px] xl:items-center">
+              <div>
+                <div class="text-sm font-semibold text-[var(--text-primary)]">{{ role.label }}</div>
+                <div class="mt-1 text-sm leading-6 text-[var(--text-secondary)]">{{ role.description }}</div>
               </div>
 
-              <!-- Provider dropdown -->
               <select
                 v-model="role.provider"
-                class="glass-input w-36 text-sm"
+                class="glass-input text-sm"
                 @change="role.dirty = true; role.value = ''; fetchModelsForRole(role)"
               >
-                <option value="" disabled>Provider…</option>
-                <option
-                  v-for="ep in enabledProviders()"
-                  :key="ep.id"
-                  :value="ep.id"
-                >
-                  {{ ep.icon }} {{ ep.name }}
+                <option value="" disabled>Select provider</option>
+                <option v-for="provider in enabledProviders()" :key="provider.id" :value="provider.id">
+                  {{ provider.name }}
                 </option>
               </select>
 
-              <!-- Model select / custom input -->
-              <div class="flex-1 relative min-w-[200px]">
-                <div v-if="role.loadingModels" class="glass-input text-sm text-[var(--text-muted)] flex items-center">
-                  Loading models…
+              <div class="min-w-0">
+                <div v-if="role.loadingModels" class="glass-input flex items-center text-sm text-[var(--text-muted)]">
+                  Loading models...
                 </div>
                 <template v-else>
-                  <!-- Dropdown mode -->
-                  <div v-if="!role.showCustom" class="flex gap-1">
+                  <div v-if="!role.showCustom" class="flex gap-2">
                     <select
                       v-model="role.value"
                       class="glass-input flex-1 text-sm"
-                      @change="role.dirty = true"
                       :disabled="!role.provider"
+                      @change="role.dirty = true"
                     >
-                      <option value="" disabled>Select model…</option>
-                      <option
-                        v-for="m in role.modelOptions"
-                        :key="m.id"
-                        :value="m.id"
-                      >
-                        {{ m.id }}
+                      <option value="" disabled>Select model</option>
+                      <option v-for="model in role.modelOptions" :key="model.id" :value="model.id">
+                        {{ model.id }}
                       </option>
-                      <option
-                        v-if="role.value && !role.modelOptions.find(m => m.id === role.value)"
-                        :value="role.value"
-                      >
+                      <option v-if="role.value && !role.modelOptions.find((model) => model.id === role.value)" :value="role.value">
                         {{ role.value }} (custom)
                       </option>
                     </select>
-                    <button
-                      class="glass-btn text-[10px] shrink-0 px-2"
-                      title="Type a custom model name"
-                      @click="role.showCustom = true"
-                    >
-                      ✎
+                    <button class="glass-btn" title="Switch to custom input" @click="role.showCustom = true">
+                      Custom
                     </button>
                   </div>
-                  <!-- Custom input mode -->
-                  <div v-else class="flex gap-1">
+
+                  <div v-else class="flex gap-2">
                     <input
                       v-model="role.value"
                       type="text"
                       class="glass-input flex-1 text-sm"
-                      placeholder="e.g. gemini-2.5-flash"
+                      placeholder="Type a custom model id"
                       @input="role.dirty = true"
                       @keydown.enter="saveModelRole(role)"
                     />
-                    <button
-                      class="glass-btn text-[10px] shrink-0 px-2"
-                      title="Switch back to dropdown"
-                      @click="role.showCustom = false"
-                    >
-                      ▾
+                    <button class="glass-btn" title="Back to dropdown" @click="role.showCustom = false">
+                      List
                     </button>
                   </div>
                 </template>
+
+                <p v-if="role.modelError" class="mt-2 text-xs text-[var(--error)]">
+                  {{ role.modelError }}
+                </p>
               </div>
 
-              <!-- Save button -->
               <button
-                class="glass-btn text-xs shrink-0"
+                class="glass-btn"
                 :class="role.dirty ? 'glass-btn-primary' : ''"
                 :disabled="role.saving || !role.value || !role.provider || backendState.status !== 'online'"
                 @click="saveModelRole(role)"
               >
-                {{ role.saving ? '...' : role.dirty ? 'Save' : 'Saved' }}
+                {{ role.saving ? 'Saving...' : role.dirty ? 'Save' : 'Saved' }}
               </button>
             </div>
-
-            <!-- Model fetch error -->
-            <p
-              v-if="role.modelError"
-              class="text-[10px] text-[var(--error)] mt-1 pl-[6.5rem]"
-            >
-              {{ role.modelError }}
-            </p>
           </div>
         </div>
       </section>
 
-      <!-- ==================== EXTRA KEYS ==================== -->
-      <section class="mb-8">
-        <h2 class="text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wider mb-3">
-          Data Source Keys
-        </h2>
+      <section class="space-y-4">
+        <div>
+          <div class="page-hero__kicker mb-3">Output defaults</div>
+          <h3 class="section-heading">Report language</h3>
+          <p class="section-copy">Set the default language for AI interpretations and generated reports.</p>
+        </div>
 
-        <div class="rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)]">
-          <div
-            v-for="ek in extraKeys"
-            :key="ek.key"
-            class="flex items-center gap-4 px-5 py-3"
-          >
-            <label class="w-32 shrink-0 text-sm text-[var(--text-primary)]">{{ ek.label }}</label>
-            <input
-              v-model="ek.value"
-              type="password"
-              class="glass-input flex-1 text-sm"
-              placeholder="Enter key..."
-              @input="ek.dirty = true"
-              @keydown.enter="saveExtraKey(ek)"
-            />
+        <div class="glass-card p-5">
+          <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_140px] lg:items-end">
+            <div>
+              <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">Default output language</label>
+              <select
+                v-model="outputLanguage"
+                class="glass-input text-sm"
+                @change="outputLanguageDirty = true"
+              >
+                <option value="zh-CN">Simplified Chinese</option>
+                <option value="en-US">English</option>
+              </select>
+              <p class="mt-2 text-xs text-[var(--text-muted)]">
+                This now drives analysis interpretation and report generation.
+              </p>
+            </div>
+
             <button
-              class="glass-btn text-xs shrink-0"
-              :class="ek.dirty ? 'glass-btn-primary' : ''"
-              :disabled="ek.saving || !ek.value || backendState.status !== 'online'"
-              @click="saveExtraKey(ek)"
+              class="glass-btn"
+              :class="outputLanguageDirty ? 'glass-btn-primary' : ''"
+              :disabled="outputLanguageSaving || backendState.status !== 'online'"
+              @click="saveOutputLanguage"
             >
-              {{ ek.saving ? '...' : ek.dirty ? 'Save' : 'Saved' }}
+              {{ outputLanguageSaving ? 'Saving...' : outputLanguageDirty ? 'Save' : 'Saved' }}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <div>
+          <div class="page-hero__kicker mb-3">External data</div>
+          <h3 class="section-heading">Data source keys</h3>
+          <p class="section-copy">Optional credentials for premium search sources can be stored here.</p>
+        </div>
+
+        <div class="glass-card p-5">
+          <div
+            v-for="extraKey in extraKeys"
+            :key="extraKey.key"
+            class="grid gap-3 border-b border-white/8 py-4 last:border-b-0 first:pt-0 last:pb-0 lg:grid-cols-[200px_minmax(0,1fr)_120px] lg:items-center"
+          >
+            <div>
+              <div class="text-sm font-semibold text-[var(--text-primary)]">{{ extraKey.label }}</div>
+              <div class="mt-1 text-sm text-[var(--text-secondary)]">Saved as an encrypted sensitive setting.</div>
+              <div v-if="extraKey.hasStoredValue" class="mt-2 text-xs text-[var(--text-muted)]">
+                Current saved value: {{ extraKey.storedValueMask }}
+              </div>
+            </div>
+
+            <input
+              v-model="extraKey.value"
+              type="password"
+              class="glass-input text-sm"
+              :placeholder="extraKey.hasStoredValue ? 'Leave blank to keep the saved key, or paste a replacement key.' : 'Enter key...'"
+              @input="extraKey.dirty = true"
+              @keydown.enter="saveExtraKey(extraKey)"
+            />
+
+            <button
+              class="glass-btn"
+              :class="extraKey.dirty ? 'glass-btn-primary' : ''"
+              :disabled="extraKey.saving || backendState.status !== 'online'"
+              @click="saveExtraKey(extraKey)"
+            >
+              {{ extraKey.saving ? 'Saving...' : extraKey.dirty ? 'Save' : 'Saved' }}
             </button>
           </div>
         </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { AnalysisRun } from '@/types'
 import { analysisApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
@@ -17,15 +17,62 @@ const running = ref<string | null>(null)
 const actionError = ref('')
 
 const analysisTypes = [
-  { key: 'bibliometrics', label: 'Bibliometrics', description: 'H-index, citations, top authors, journals', icon: '📈' },
-  { key: 'trend', label: 'Trend Analysis', description: 'Publication & citation trends over time', icon: '📊' },
-  { key: 'network', label: 'Keyword Network', description: 'Keyword co-occurrence network', icon: '🔗' },
-  { key: 'coauthor', label: 'Co-authorship', description: 'Author collaboration network', icon: '👥' },
-  { key: 'topic_modeling', label: 'Topic Modeling', description: 'Discover research themes', icon: '🧠' },
+  {
+    key: 'bibliometrics',
+    label: 'Bibliometrics',
+    description: 'Track publication volume, citations, venues, and author influence.',
+    icon: 'M4 18h16M7 14v4M12 9v9M17 5v13',
+    tone: 'text-[var(--accent-primary)]',
+  },
+  {
+    key: 'trend',
+    label: 'Trend analysis',
+    description: 'Reveal temporal momentum and citation acceleration.',
+    icon: 'M4 15l4-4 3 3 5-7 3 3',
+    tone: 'text-[var(--accent-secondary)]',
+  },
+  {
+    key: 'network',
+    label: 'Keyword network',
+    description: 'Map co-occurrence structure and cluster formation.',
+    icon: 'M5 6a2 2 0 1 0 0.001 0zM18 9a2 2 0 1 0 0.001 0zM9 18a2 2 0 1 0 0.001 0zM6.7 7.1l9.6 1.8M8.1 16.4l8.3-5.8M6.6 7.8l2.2 8.4',
+    tone: 'text-[var(--accent-tertiary)]',
+  },
+  {
+    key: 'coauthor',
+    label: 'Co-authorship',
+    description: 'Expose collaboration patterns among authors and labs.',
+    icon: 'M7 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM17 13a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3.5 19a4.5 4.5 0 0 1 9 0M13 19a4 4 0 0 1 8 0',
+    tone: 'text-[var(--info)]',
+  },
+  {
+    key: 'topic_modeling',
+    label: 'Topic modeling',
+    description: 'Surface latent themes and semantic neighborhoods.',
+    icon: 'M5 6h14M5 12h14M5 18h8M17 18l2-2m0 0-2-2m2 2h-5',
+    tone: 'text-[var(--warning)]',
+  },
 ] as const
+
+const statusBadge: Record<string, string> = {
+  pending: 'badge-warning',
+  running: 'badge-info',
+  completed: 'badge-success',
+  failed: 'badge-error',
+}
+
+const completedRuns = computed(() => runs.value.filter((run) => run.status === 'completed').length)
+const failedRuns = computed(() => runs.value.filter((run) => run.status === 'failed').length)
+const activeRuns = computed(() => runs.value.filter((run) => run.status === 'running' || run.status === 'pending').length)
+const latestRunLabel = computed(() => {
+  const firstRun = runs.value[0]
+  if (!firstRun) return 'No analyses yet'
+  return new Date(firstRun.created_at).toLocaleString()
+})
 
 async function loadRuns() {
   if (!sessionStore.currentSession) return
+
   loading.value = true
   actionError.value = ''
   try {
@@ -40,11 +87,13 @@ async function loadRuns() {
 
 async function runAnalysis(type: string) {
   if (!sessionStore.currentSession) return
+
   actionError.value = ''
   if (backendState.status !== 'online') {
     actionError.value = getBackendOfflineMessage('analysis')
     return
   }
+
   running.value = type
   try {
     const result = await analysisApi.create({
@@ -52,9 +101,16 @@ async function runAnalysis(type: string) {
       analysis_type: type,
     })
     runs.value.unshift(result)
-    pollForCompletion(result.id)
+    void pollForCompletion(result.id)
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : 'Failed to start analysis.'
+    const detail = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response?.data?.detail
+    if ((err as { response?: { status?: number } })?.response?.status === 409 && detail && typeof detail === 'object') {
+      const message = (detail as { message?: string; existing_status?: string }).message
+      const existingStatus = (detail as { existing_status?: string }).existing_status
+      actionError.value = existingStatus ? `${message} Existing run status: ${existingStatus}.` : (message ?? 'This analysis has already been run for the current paper selection.')
+    } else {
+      actionError.value = err instanceof Error ? err.message : 'Failed to start analysis.'
+    }
     await checkBackend(true)
   } finally {
     running.value = null
@@ -63,26 +119,21 @@ async function runAnalysis(type: string) {
 
 async function pollForCompletion(runId: number) {
   const maxAttempts = 60
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise(r => setTimeout(r, 5000))
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5000))
     try {
       const updated = await analysisApi.get(runId)
-      const idx = runs.value.findIndex(r => r.id === runId)
-      if (idx !== -1) runs.value[idx] = updated
+      const index = runs.value.findIndex((run) => run.id === runId)
+      if (index !== -1) runs.value[index] = updated
       if (updated.status === 'completed' || updated.status === 'failed') break
-    } catch { break }
+    } catch {
+      break
+    }
   }
 }
 
 function getLatestRun(type: string) {
-  return runs.value.find(r => r.analysis_type === type)
-}
-
-const statusBadge: Record<string, string> = {
-  pending: 'badge-warning',
-  running: 'badge-info',
-  completed: 'badge-success',
-  failed: 'badge-error',
+  return runs.value.find((run) => run.analysis_type === type)
 }
 
 watch(() => sessionStore.currentSessionId, loadRuns)
@@ -90,114 +141,204 @@ onMounted(loadRuns)
 </script>
 
 <template>
-  <div>
-    <h1 class="text-xl font-semibold text-[var(--text-primary)] mb-1">Analysis</h1>
-    <p class="text-sm text-[var(--text-secondary)] mb-6">
-      Run analyses on your collected papers.
-    </p>
+  <div class="space-y-6">
+    <section class="page-hero">
+      <div class="page-hero__kicker">Insight engine</div>
+      <h2 class="page-hero__title">Transform the library into charts that can survive a supervisor review.</h2>
+      <p class="page-hero__copy">
+        This stage is now structured around a left control rail and a right evidence column, so the run launcher and the outputs
+        no longer compete visually.
+      </p>
 
-    <div v-if="!sessionStore.currentSession" class="text-[var(--text-muted)]">
-      Select a session first.
+      <div class="stat-grid">
+        <div class="stat-card">
+          <span class="stat-card__label">Completed</span>
+          <span class="stat-card__value">{{ completedRuns }}</span>
+          <span class="stat-card__hint">Finished runs ready for interpretation</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__label">In progress</span>
+          <span class="stat-card__value">{{ activeRuns }}</span>
+          <span class="stat-card__hint">Pending or actively generating</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__label">Failed</span>
+          <span class="stat-card__value">{{ failedRuns }}</span>
+          <span class="stat-card__hint">Runs needing a rerun or debugging</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-card__label">Latest update</span>
+          <span class="stat-card__value text-[1rem] !leading-6">{{ latestRunLabel }}</span>
+          <span class="stat-card__hint">Most recent analysis timestamp</span>
+        </div>
+      </div>
+    </section>
+
+    <div v-if="!sessionStore.currentSession" class="surface-panel p-8">
+      <h3 class="surface-panel__title">Select a session first.</h3>
+      <p class="surface-panel__copy mt-3">
+        Analysis is attached to a session because it depends on the collected paper corpus.
+      </p>
     </div>
 
     <template v-else>
       <div
         v-if="actionError"
-        class="mb-4 rounded-xl border border-[var(--error)]/30 bg-[var(--error)]/10 px-4 py-3 text-sm text-[var(--error)]"
+        class="callout border border-[var(--error)]/25 bg-[var(--error)]/10 text-sm text-[var(--error)]"
       >
         {{ actionError }}
       </div>
 
-      <!-- Analysis type cards -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        <div
-          v-for="t in analysisTypes"
-          :key="t.key"
-          class="glass-card p-4 flex flex-col"
-        >
-          <div class="flex items-start gap-3 mb-3">
-            <span class="text-2xl leading-none">{{ t.icon }}</span>
-            <div class="flex-1 min-w-0">
-              <h3 class="text-sm font-semibold text-[var(--text-primary)]">{{ t.label }}</h3>
-              <p class="text-xs text-[var(--text-muted)] mt-0.5 leading-relaxed">{{ t.description }}</p>
+      <div class="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div class="space-y-4">
+          <GlassCard>
+            <template #header>
+              <div class="surface-panel__header !mb-0">
+                <div>
+                  <p class="surface-panel__eyebrow">Run launcher</p>
+                  <h3 class="surface-panel__title">Choose the next lens</h3>
+                  <p class="surface-panel__copy">
+                    Each analysis type now reads like a report-building action rather than a generic button.
+                  </p>
+                </div>
+              </div>
+            </template>
+
+            <div class="space-y-3">
+              <button
+                v-for="analysis in analysisTypes"
+                :key="analysis.key"
+                class="glass-card glass-card--interactive w-full p-4 text-left"
+                :disabled="running !== null || backendState.status !== 'online'"
+                @click="runAnalysis(analysis.key)"
+              >
+                <div class="flex items-start gap-3">
+                  <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/[0.05]" :class="analysis.tone">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                      <path :d="analysis.icon" />
+                    </svg>
+                  </div>
+
+                  <div class="min-w-0 flex-1">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="text-sm font-semibold text-[var(--text-primary)]">{{ analysis.label }}</span>
+                      <span
+                        v-if="getLatestRun(analysis.key)"
+                        :class="['badge', statusBadge[getLatestRun(analysis.key)!.status]]"
+                      >
+                        {{ getLatestRun(analysis.key)!.status }}
+                      </span>
+                    </div>
+                    <p class="mt-1 text-sm leading-6 text-[var(--text-secondary)]">{{ analysis.description }}</p>
+                    <p v-if="getLatestRun(analysis.key)" class="mt-2 text-xs text-[var(--text-muted)]">
+                      Last run: {{ new Date(getLatestRun(analysis.key)!.created_at).toLocaleString() }}
+                    </p>
+                  </div>
+                </div>
+
+                <div class="mt-4 flex items-center justify-between">
+                  <span class="text-xs text-[var(--text-muted)]">
+                    {{ running === analysis.key ? 'Run queued...' : 'Start this analysis' }}
+                  </span>
+                  <span v-if="running === analysis.key" class="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                </div>
+              </button>
             </div>
-          </div>
-          <!-- Latest run status -->
-          <div v-if="getLatestRun(t.key)" class="mb-3">
-            <span :class="['badge text-[10px]', statusBadge[getLatestRun(t.key)!.status]]">
-              {{ getLatestRun(t.key)!.status }}
-            </span>
-            <span class="text-[10px] text-[var(--text-muted)] ml-2">
-              {{ new Date(getLatestRun(t.key)!.created_at).toLocaleString() }}
-            </span>
-          </div>
-          <div class="mt-auto">
-            <button
-              class="glass-btn glass-btn-primary text-xs w-full"
-              :disabled="running !== null || backendState.status !== 'online'"
-              @click="runAnalysis(t.key)"
-            >
-              <span v-if="running === t.key" class="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin mr-1.5" />
-              {{ running === t.key ? 'Running...' : 'Run' }}
-            </button>
-          </div>
-        </div>
-      </div>
+          </GlassCard>
 
-      <!-- Loading -->
-      <div v-if="loading" class="space-y-4">
-        <SkeletonCard v-for="i in 2" :key="i" height="300px" :lines="5" />
-      </div>
+          <GlassCard>
+            <template #header>
+              <div class="surface-panel__header !mb-0">
+                <div>
+                  <p class="surface-panel__eyebrow">Storyline</p>
+                  <h3 class="surface-panel__title">Recommended presentation order</h3>
+                </div>
+              </div>
+            </template>
 
-      <!-- Results -->
-      <div v-else class="space-y-6">
-        <div v-if="runs.length === 0" class="text-[var(--text-muted)]">
-          No analyses yet. Select a type above to run one.
-        </div>
-
-        <GlassCard v-for="run in runs" :key="run.id">
-          <div class="flex items-center justify-between mb-4">
-            <div>
-              <span class="font-medium text-[var(--text-primary)] capitalize">
-                {{ run.analysis_type.replace('_', ' ') }}
-              </span>
-              <span :class="['badge ml-3', statusBadge[run.status]]">
-                {{ run.status }}
-              </span>
+            <div class="space-y-3">
+              <div class="callout callout--accent">
+                <div class="text-sm font-semibold text-[var(--text-primary)]">1. Start with trend and bibliometrics</div>
+                <div class="mt-1 text-sm text-[var(--text-secondary)]">
+                  Lead with scale, growth, venues, and high-impact authors so the audience understands the field shape.
+                </div>
+              </div>
+              <div class="callout">
+                <div class="text-sm font-semibold text-[var(--text-primary)]">2. Move into structure</div>
+                <div class="mt-1 text-sm text-[var(--text-secondary)]">
+                  Network and topic modeling should explain how themes cluster rather than just listing keywords.
+                </div>
+              </div>
             </div>
-            <span class="text-xs text-[var(--text-muted)]">
-              {{ new Date(run.created_at).toLocaleString() }}
-            </span>
+          </GlassCard>
+        </div>
+
+        <div class="space-y-6">
+          <div v-if="loading" class="space-y-4">
+            <SkeletonCard v-for="index in 3" :key="index" height="280px" :lines="5" />
           </div>
 
-          <!-- Running indicator -->
-          <div v-if="run.status === 'running' || run.status === 'pending'" class="streaming-bar w-full mb-4" />
-
-          <!-- Charts -->
           <div
-            v-if="run.chart_configs && run.chart_configs.length"
-            class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-4"
+            v-else-if="runs.length === 0"
+            class="surface-panel p-8"
           >
-            <ChartContainer
-              v-for="chart in run.chart_configs"
-              :key="chart.id"
-              :option="chart.option"
-              :title="chart.title"
-              :height="(['network', 'coauthor'].includes(run.analysis_type)) ? '500px' : '400px'"
-            />
+            <div class="surface-panel__header">
+              <div>
+                <p class="surface-panel__eyebrow">No output yet</p>
+                <h3 class="surface-panel__title">Run the first analysis to populate the evidence column.</h3>
+              </div>
+            </div>
+            <p class="surface-panel__copy">
+              The right side will show chart panels and model-written interpretation once a run starts producing results.
+            </p>
           </div>
 
-          <!-- AI Interpretation with markdown -->
-          <div v-if="run.ai_interpretation" class="mt-4 glass-card p-4">
-            <h4 class="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-2">AI Interpretation</h4>
-            <div class="md-content">
-              <StreamingText
-                :text="run.ai_interpretation"
-                :is-streaming="false"
+          <GlassCard v-for="run in runs" :key="run.id">
+            <template #header>
+              <div class="surface-panel__header !mb-0">
+                <div>
+                  <p class="surface-panel__eyebrow">Run output</p>
+                  <div class="flex flex-wrap items-center gap-3">
+                    <h3 class="surface-panel__title capitalize">
+                      {{ run.analysis_type.replace('_', ' ') }}
+                    </h3>
+                    <span :class="['badge', statusBadge[run.status]]">{{ run.status }}</span>
+                  </div>
+                </div>
+                <div class="text-xs text-[var(--text-muted)]">
+                  {{ new Date(run.created_at).toLocaleString() }}
+                </div>
+              </div>
+            </template>
+
+            <div v-if="run.status === 'running' || run.status === 'pending'" class="mb-4">
+              <div class="streaming-bar w-full" />
+            </div>
+
+            <div
+              v-if="run.chart_configs && run.chart_configs.length"
+              class="grid grid-cols-1 gap-5 xl:grid-cols-2"
+            >
+              <ChartContainer
+                v-for="chart in run.chart_configs"
+                :key="chart.id"
+                :option="chart.option"
+                :title="chart.title"
+                :height="(['network', 'coauthor'].includes(run.analysis_type)) ? '500px' : '400px'"
               />
             </div>
-          </div>
-        </GlassCard>
+
+            <div v-if="run.ai_interpretation" class="mt-5 rounded-[22px] border border-white/8 bg-white/[0.03] p-5">
+              <h4 class="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">AI interpretation</h4>
+              <div class="md-content">
+                <StreamingText
+                  :text="run.ai_interpretation"
+                  :is-streaming="false"
+                />
+              </div>
+            </div>
+          </GlassCard>
+        </div>
       </div>
     </template>
   </div>
