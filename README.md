@@ -10,12 +10,12 @@ ARTA 是一个面向学术调研场景的桌面应用，用来把“选题讨论
 - 在 Library 中分页筛选、纳入/排除和管理语料
 - 运行趋势、关键词、主题等分析任务
 - 生成报告，并导出 `.bib` / `.ris`
-- 在基础检索后发起 `snowball` 扩展，但必须先经过提案和审批
+- 以基础检索语料为主语料，避免扩展阶段把结果污染
 
 ## 当前版本的关键改动
 
-- `snowball` 已从自动扩展改成“提案 -> 审批 -> 分批导入”的流程
-- Chat 现在可以看到搜索、snowball、分析、报告的阶段性进展
+- 当前版本已停用 `snowball`，默认只基于基础检索结果进入 Library、Analysis 和 Report
+- Chat 现在可以看到搜索、分析、报告的阶段性进展
 - Library 改成真正分页，支持 `10 / 20 / 50` 每页和翻页访问全量数据
 - 失败的聊天消息会显示具体错误信息，并支持重试和删除
 - 报告和分析解释支持默认输出语言配置，当前可选中文或英文
@@ -28,7 +28,7 @@ ARTA 是一个面向学术调研场景的桌面应用，用来把“选题讨论
 ARTA/
 ├─ backend/                  FastAPI 后端、数据库、agents、数据源接入
 │  ├─ app/
-│  │  ├─ agents/             planner / executor / analyst / publisher / snowball
+│  │  ├─ agents/             planner / executor / analyst / publisher
 │  │  ├─ api/                REST API 与 WebSocket
 │  │  ├─ db/                 SQLAlchemy 模型与数据库初始化
 │  │  ├─ services/           AI、导出、业务服务
@@ -145,10 +145,11 @@ uv run python build.py
 3. 在 `Library` 页面筛选和确认纳入文献。
 4. 在 `Analysis` 页面运行趋势、关键词、网络等分析。
 5. 在 `Report` 页面生成汇总报告，并导出引用文件。
-6. 如果需要扩大语料，再对 `snowball` 提案进行审批，而不是默认自动扩展。
+6. 当前版本不启用 `snowball`，如需扩大语料，建议先手动收紧或补充检索词。
 
 ## 已知注意点
 
 - `Scopus` 依赖额外 API key，没有配置时不会返回有效结果。
 - Tauri 当前 `identifier` 仍是 `com.arta.app`，虽然不影响 Windows 打包，但后续可进一步规范。
 - 大规模语料会显著拉长部分图表和网络分析时间，演示时建议先用经过筛选的语料集。
+- `Search Plan` 仍保留 `snowball_config` 字段用于兼容旧数据，但当前发布版本不会执行它。

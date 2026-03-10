@@ -170,7 +170,7 @@ async def main():
     trimmed = plan_data.copy()
     trimmed["queries"] = queries[:2]
     trimmed["max_results_per_query"] = 15
-    # Disable snowball for speed
+    # Keep the legacy field disabled in the current release
     if "snowball_config" in trimmed:
         trimmed["snowball_config"]["enabled"] = False
 

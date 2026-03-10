@@ -8,8 +8,6 @@ import type {
   AnalysisRun,
   Report,
   AppSetting,
-  SnowballRun,
-  SnowballCandidate,
 } from '@/types'
 import { getApiBaseUrl, markBackendOffline, markBackendOnline, isBackendOfflineError } from '@/composables/useBackend'
 
@@ -73,14 +71,6 @@ export const searchApi = {
     api.get<SearchPlan>(`/search/plans/${planId}`).then(r => r.data),
   planAction: (planId: number, action: string, planData?: Record<string, unknown>) =>
     api.post<SearchPlan>(`/search/plans/${planId}/action`, { action, plan_data: planData }).then(r => r.data),
-  listSnowballRuns: (sessionId: number) =>
-    api.get<SnowballRun[]>('/search/snowball-runs', { params: { session_id: sessionId } }).then(r => r.data),
-  getSnowballRun: (runId: number) =>
-    api.get<SnowballRun>(`/search/snowball-runs/${runId}`).then(r => r.data),
-  listSnowballCandidates: (runId: number, params?: Record<string, unknown>) =>
-    api.get<SnowballCandidate[]>(`/search/snowball-runs/${runId}/candidates`, { params }).then(r => r.data),
-  snowballAction: (runId: number, data: { action: string; config?: Record<string, unknown>; candidate_ids?: number[] }) =>
-    api.post<SnowballRun>(`/search/snowball-runs/${runId}/action`, data).then(r => r.data),
 }
 
 // Papers

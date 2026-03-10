@@ -1,4 +1,8 @@
-"""Snowball Agent - staged citation expansion with approval and screening."""
+"""Legacy snowball agent.
+
+This implementation is retained for future work, but the current release
+does not expose or execute snowball expansion in the user workflow.
+"""
 
 import json
 import logging
