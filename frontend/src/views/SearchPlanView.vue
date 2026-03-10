@@ -165,21 +165,21 @@ function clonePlanData(plan: SearchPlan): SearchPlanData {
   copied.exclusion_criteria = copied.exclusion_criteria ?? []
   copied.year_range = copied.year_range ?? { from: null, to: null }
   copied.snowball_config = {
-    enabled: copied.snowball_config?.enabled ?? false,
-    approval_required: copied.snowball_config?.approval_required ?? true,
-    approval_mode: copied.snowball_config?.approval_mode ?? 'batch',
-    decision_mode: copied.snowball_config?.decision_mode ?? 'manual_review',
-    max_hops: copied.snowball_config?.max_hops ?? 1,
-    directions: copied.snowball_config?.directions ?? ['forward'],
-    min_citation_threshold: copied.snowball_config?.min_citation_threshold ?? 10,
-    max_seed_papers: copied.snowball_config?.max_seed_papers ?? 5,
-    per_seed_limit: copied.snowball_config?.per_seed_limit ?? 25,
-    max_candidates: copied.snowball_config?.max_candidates ?? 150,
-    verification_mode: copied.snowball_config?.verification_mode ?? 'stable_identifier',
+    enabled: false,
+    approval_required: false,
+    approval_mode: 'batch',
+    decision_mode: 'manual_review',
+    max_hops: 1,
+    directions: ['forward'],
+    min_citation_threshold: 10,
+    max_seed_papers: 5,
+    per_seed_limit: 25,
+    max_candidates: 150,
+    verification_mode: 'stable_identifier',
     ai_filter: {
-      enabled: copied.snowball_config?.ai_filter?.enabled ?? true,
-      min_score: copied.snowball_config?.ai_filter?.min_score ?? 0.55,
-      auto_import_score: copied.snowball_config?.ai_filter?.auto_import_score ?? 0.8,
+      enabled: false,
+      min_score: 0.55,
+      auto_import_score: 0.8,
     },
   }
   return copied
@@ -208,14 +208,6 @@ function addQuery() {
 function removeQuery(index: number) {
   if (!draftPlanData.value) return
   draftPlanData.value.queries.splice(index, 1)
-}
-
-function setSnowballDirection(direction: 'forward' | 'backward', checked: boolean) {
-  if (!draftPlanData.value) return
-  const next = new Set(draftPlanData.value.snowball_config.directions ?? [])
-  if (checked) next.add(direction)
-  else next.delete(direction)
-  draftPlanData.value.snowball_config.directions = [...next]
 }
 
 async function savePlanEdits(planId: number) {
@@ -296,13 +288,13 @@ onUnmounted(() => {
         <div class="callout">
           <div class="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Edit</div>
           <p class="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            Rejecting a plan no longer blocks the workflow. You can reopen it, adjust queries, snowball rules, and notes, then save the revised draft.
+            Rejecting a plan no longer blocks the workflow. You can reopen it, adjust queries, year range, and notes, then save the revised draft.
           </p>
         </div>
         <div class="callout">
-          <div class="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Snowball</div>
+          <div class="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Scope</div>
           <p class="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            Treat snowball as a second-stage expansion. Keep it off unless the seed set is clean enough to justify proposal review and manual approval.
+            Prioritize clean search queries and realistic year bounds. A smaller, precise first-pass corpus is easier to defend than a noisy oversized pull.
           </p>
         </div>
       </div>
@@ -360,7 +352,6 @@ onUnmounted(() => {
                 <div class="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
                   <span class="capsule">{{ plan.plan_data.queries?.length ?? 0 }} queries</span>
                   <span class="capsule">{{ yearRangeLabel(plan) }}</span>
-                  <span v-if="plan.plan_data.snowball_config?.enabled" class="capsule">Snowball enabled</span>
                 </div>
               </div>
 
@@ -428,7 +419,7 @@ onUnmounted(() => {
                 <textarea v-model="draftPlanData.description" class="glass-input min-h-[120px] text-sm" />
               </div>
 
-              <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+              <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-2">
                 <div>
                   <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">Year from</label>
                   <input v-model.number="draftPlanData.year_range.from" class="glass-input text-sm" type="number" />
@@ -436,71 +427,6 @@ onUnmounted(() => {
                 <div>
                   <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">Year to</label>
                   <input v-model.number="draftPlanData.year_range.to" class="glass-input text-sm" type="number" />
-                </div>
-                <label class="flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-secondary)]">
-                  <input v-model="draftPlanData.snowball_config.enabled" type="checkbox" class="accent-[var(--accent-primary)]" />
-                  Enable snowball
-                </label>
-                <label class="flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-secondary)]">
-                  <input v-model="draftPlanData.snowball_config.ai_filter!.enabled" type="checkbox" class="accent-[var(--accent-primary)]" />
-                  AI screening
-                </label>
-              </div>
-
-              <div v-if="draftPlanData.snowball_config.enabled" class="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-                <div>
-                  <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">Hops</label>
-                  <input v-model.number="draftPlanData.snowball_config.max_hops" class="glass-input text-sm" type="number" min="1" />
-                </div>
-                <div>
-                  <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">Min citations</label>
-                  <input v-model.number="draftPlanData.snowball_config.min_citation_threshold" class="glass-input text-sm" type="number" min="0" />
-                </div>
-                <div>
-                  <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">Seed papers</label>
-                  <input v-model.number="draftPlanData.snowball_config.max_seed_papers" class="glass-input text-sm" type="number" min="1" />
-                </div>
-                <div>
-                  <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">Per-seed limit</label>
-                  <input v-model.number="draftPlanData.snowball_config.per_seed_limit" class="glass-input text-sm" type="number" min="5" />
-                </div>
-              </div>
-
-              <div v-if="draftPlanData.snowball_config.enabled" class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-                <div>
-                  <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">Max candidates</label>
-                  <input v-model.number="draftPlanData.snowball_config.max_candidates" class="glass-input text-sm" type="number" min="10" />
-                </div>
-                <div>
-                  <label class="mb-1.5 block text-xs font-medium text-[var(--text-secondary)]">Verification</label>
-                  <select v-model="draftPlanData.snowball_config.verification_mode" class="glass-input text-sm">
-                    <option value="none">No verification</option>
-                    <option value="stable_identifier">Stable identifier</option>
-                    <option value="cross_source">Cross-source</option>
-                  </select>
-                </div>
-                <div class="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-secondary)]">
-                  <div class="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Directions</div>
-                  <div class="flex gap-4">
-                    <label class="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        class="accent-[var(--accent-primary)]"
-                        :checked="draftPlanData.snowball_config.directions.includes('forward')"
-                        @change="setSnowballDirection('forward', ($event.target as HTMLInputElement).checked)"
-                      />
-                      Forward
-                    </label>
-                    <label class="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        class="accent-[var(--accent-primary)]"
-                        :checked="draftPlanData.snowball_config.directions.includes('backward')"
-                        @change="setSnowballDirection('backward', ($event.target as HTMLInputElement).checked)"
-                      />
-                      Backward
-                    </label>
-                  </div>
                 </div>
               </div>
 
@@ -552,12 +478,6 @@ onUnmounted(() => {
                 <div class="callout" v-if="plan.plan_data.max_results_per_query">
                   <div class="text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Max per query</div>
                   <div class="mt-1 text-sm text-[var(--text-primary)]">{{ plan.plan_data.max_results_per_query }}</div>
-                </div>
-                <div class="callout" v-if="plan.plan_data.snowball_config?.enabled">
-                  <div class="text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Snowball</div>
-                  <div class="mt-1 text-sm text-[var(--text-primary)]">
-                    {{ plan.plan_data.snowball_config.directions?.join(', ') ?? 'forward, backward' }}
-                  </div>
                 </div>
               </div>
 

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { ChatMessage as ChatMessageType, SnowballCandidate, SnowballRun } from '@/types'
-import { chatApi, searchApi } from '@/composables/useApi'
+import type { ChatMessage as ChatMessageType } from '@/types'
+import { chatApi } from '@/composables/useApi'
 import { useSessionStore } from '@/stores/session'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { checkBackend, getBackendOfflineMessage, useBackendState } from '@/composables/useBackend'
@@ -31,10 +31,6 @@ const planGenerating = ref(false)
 const actionError = ref('')
 const needsApiKey = ref(false)
 const workflowFeed = ref<WorkflowFeedItem[]>([])
-const currentSnowballRun = ref<SnowballRun | null>(null)
-const snowballPreview = ref<SnowballCandidate[]>([])
-const snowballBusyAction = ref('')
-const selectedSnowballIds = ref<Set<number>>(new Set())
 
 let ws: ReturnType<typeof useWebSocket> | null = null
 let localMessageCounter = 0
@@ -54,12 +50,8 @@ const workflowSteps = [
 const sessionMessageCount = computed(() => messages.value.length + (streaming.value && streamingContent.value ? 1 : 0))
 const assistantMessageCount = computed(() => messages.value.filter((message) => message.role === 'assistant').length)
 const currentPaperCount = computed(() => sessionStore.currentSession?.paper_count ?? 0)
-const selectedSnowballCount = computed(() => selectedSnowballIds.value.size)
 
 const liveStatus = computed(() => {
-  if (snowballBusyAction.value) {
-    return { label: 'Snowball', detail: 'Reviewing or importing snowball candidates.' }
-  }
   if (planGenerating.value) {
     return { label: 'Planning', detail: 'The planner is drafting a search strategy.' }
   }
@@ -118,10 +110,6 @@ function upsertWorkflowFeed(id: string, title: string, detail: string, tone: Wor
 
 function clearRuntimeState() {
   workflowFeed.value = []
-  currentSnowballRun.value = null
-  snowballPreview.value = []
-  selectedSnowballIds.value = new Set()
-  snowballBusyAction.value = ''
 }
 
 async function refreshSessionStats() {
@@ -129,102 +117,6 @@ async function refreshSessionStats() {
     await sessionStore.fetchSessions()
   } catch {
     // Session refresh should not break the chat surface.
-  }
-}
-
-async function fetchSnowballPreview(runId: number) {
-  try {
-    snowballPreview.value = await searchApi.listSnowballCandidates(runId, { status: 'pending', limit: 8 })
-    selectedSnowballIds.value = new Set()
-  } catch {
-    snowballPreview.value = []
-  }
-}
-
-async function refreshSnowballRun(runId: number) {
-  try {
-    currentSnowballRun.value = await searchApi.getSnowballRun(runId)
-    if (currentSnowballRun.value.status === 'awaiting_review') {
-      await fetchSnowballPreview(runId)
-    } else if (currentSnowballRun.value.status === 'completed' || currentSnowballRun.value.status === 'rejected') {
-      snowballPreview.value = []
-      selectedSnowballIds.value = new Set()
-    }
-  } catch {
-    currentSnowballRun.value = null
-  }
-}
-
-async function loadSnowballState() {
-  if (!sessionStore.currentSession) return
-  try {
-    const runs = await searchApi.listSnowballRuns(sessionStore.currentSession.id)
-    currentSnowballRun.value = runs[0] ?? null
-    if (currentSnowballRun.value?.status === 'awaiting_review') {
-      await fetchSnowballPreview(currentSnowballRun.value.id)
-    }
-  } catch {
-    currentSnowballRun.value = null
-  }
-}
-
-function toggleSnowballCandidate(id: number) {
-  const next = new Set(selectedSnowballIds.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  selectedSnowballIds.value = next
-}
-
-async function handleSnowballAction(action: 'prepare_review' | 'approve_all' | 'approve_high_confidence' | 'approve_selected' | 'reject_selected' | 'reject') {
-  if (!currentSnowballRun.value) return
-  if (backendState.status !== 'online') {
-    actionError.value = getBackendOfflineMessage('snowball review')
-    return
-  }
-
-  const candidateIds = ['approve_selected', 'reject_selected'].includes(action)
-    ? [...selectedSnowballIds.value]
-    : undefined
-
-  if ((action === 'approve_selected' || action === 'reject_selected') && (!candidateIds || candidateIds.length === 0)) {
-    actionError.value = 'Select at least one snowball candidate first.'
-    return
-  }
-
-  snowballBusyAction.value = action
-  actionError.value = ''
-  try {
-    await searchApi.snowballAction(currentSnowballRun.value.id, {
-      action,
-      candidate_ids: candidateIds,
-    })
-
-    if (action === 'reject') {
-      appendSystemMessage('Snowball proposal rejected. The workflow will continue with the base search results only.')
-      currentSnowballRun.value.status = 'rejected'
-      snowballPreview.value = []
-      selectedSnowballIds.value = new Set()
-      return
-    }
-
-    if (action === 'prepare_review') {
-      appendSystemMessage('Snowball review requested. ARTA is now collecting, screening, and verifying candidate papers.')
-    } else if (action === 'approve_high_confidence') {
-      appendSystemMessage('Snowball high-confidence import requested. ARTA will only import the strongest screened candidates.')
-    } else if (action === 'approve_all') {
-      appendSystemMessage('Snowball full import requested. ARTA will import every screened candidate that passes verification.')
-    } else if (action === 'approve_selected') {
-      appendSystemMessage(`Requested import for ${candidateIds?.length ?? 0} selected snowball candidates.`)
-    } else if (action === 'reject_selected') {
-      appendSystemMessage(`Rejected ${candidateIds?.length ?? 0} selected snowball candidates.`)
-      selectedSnowballIds.value = new Set()
-      await refreshSnowballRun(currentSnowballRun.value.id)
-    }
-  } catch (err) {
-    actionError.value = err instanceof Error ? err.message : 'Snowball action failed.'
-    await checkBackend(true)
-  } finally {
-    snowballBusyAction.value = ''
   }
 }
 
@@ -312,60 +204,8 @@ function setupWebSocket() {
     const planId = data.plan_id as number
     const totalPapers = data.total_papers as number
     upsertWorkflowFeed(`search-${planId}`, 'Search', `Base search completed with ${totalPapers} papers.`, 'success')
-    appendSystemMessage(`Base search completed. ${totalPapers} papers were collected. If snowball is enabled, ARTA will prepare a proposal instead of expanding automatically.`)
+    appendSystemMessage(`Base search completed. ${totalPapers} papers were collected and added to the library.`)
     void refreshSessionStats()
-  })
-
-  ws.on('snowball_proposed', (data: Record<string, unknown>) => {
-    const runId = data.run_id as number | undefined
-    const summary = data.proposal_summary as Record<string, unknown> | undefined
-    upsertWorkflowFeed(
-      `snowball-${runId ?? 'proposal'}`,
-      'Snowball proposal',
-      `Awaiting approval | budget ${summary?.estimated_candidate_budget ?? 0} candidates`,
-      'warning',
-    )
-    appendSystemMessage(`Snowball proposal ready. Estimated candidate budget: ${summary?.estimated_candidate_budget ?? 0}. Review the seed papers and choose whether to skip, review, or import high-confidence candidates.`)
-    if (runId) void refreshSnowballRun(runId)
-  })
-
-  ws.on('snowball_progress', (data: Record<string, unknown>) => {
-    const runId = data.run_id as number
-    const step = (data.step as string) || 'running'
-    const candidateCount = data.candidate_count as number | undefined
-    upsertWorkflowFeed(
-      `snowball-${runId}`,
-      'Snowball',
-      `${step} | ${candidateCount ?? 0} candidates in flight`,
-      'accent',
-    )
-  })
-
-  ws.on('snowball_review_ready', (data: Record<string, unknown>) => {
-    const runId = data.run_id as number
-    const stats = data.stats as Record<string, number> | undefined
-    upsertWorkflowFeed(
-      `snowball-${runId}`,
-      'Snowball review',
-      `Review ready | ${stats?.candidate_count ?? 0} candidates, ${stats?.high_confidence_count ?? 0} high-confidence`,
-      'warning',
-    )
-    appendSystemMessage(`Snowball review is ready. ${stats?.candidate_count ?? 0} candidates were staged, with ${stats?.high_confidence_count ?? 0} marked as high-confidence.`)
-    void refreshSnowballRun(runId)
-  })
-
-  ws.on('snowball_complete', (data: Record<string, unknown>) => {
-    const runId = data.run_id as number
-    const importedCount = data.imported_count as number
-    upsertWorkflowFeed(`snowball-${runId}`, 'Snowball', `Completed | ${importedCount} candidates imported`, 'success')
-    appendSystemMessage(`Snowball import completed. ${importedCount} candidates were added to the library.`)
-    void refreshSnowballRun(runId)
-    void refreshSessionStats()
-  })
-
-  ws.on('snowball_rejected', (data: Record<string, unknown>) => {
-    const runId = data.run_id as number
-    upsertWorkflowFeed(`snowball-${runId}`, 'Snowball', 'Proposal rejected by the user.', 'warning')
   })
 
   ws.on('analysis_progress', (data: Record<string, unknown>) => {
@@ -413,7 +253,6 @@ async function loadMessages() {
 
   try {
     messages.value = await chatApi.getMessages(sessionStore.currentSession.id)
-    await loadSnowballState()
     await nextTick()
     scrollToBottom()
     setupWebSocket()
@@ -744,127 +583,7 @@ onUnmounted(() => {
             <div v-else class="callout">
               <div class="text-sm font-semibold text-[var(--text-primary)]">No live workflow events yet</div>
               <div class="mt-1 text-sm text-[var(--text-secondary)]">
-                Search, snowball, analysis, and report progress will stream into this panel as soon as the session starts moving.
-              </div>
-            </div>
-          </GlassCard>
-
-          <GlassCard v-if="currentSnowballRun">
-            <template #header>
-              <div class="surface-panel__header !mb-0">
-                <div>
-                  <p class="surface-panel__eyebrow">Snowball</p>
-                  <h3 class="surface-panel__title">Review and control</h3>
-                </div>
-                <span class="capsule">{{ currentSnowballRun.status }}</span>
-              </div>
-            </template>
-
-            <div class="space-y-4">
-              <div class="callout">
-                <div class="text-sm font-semibold text-[var(--text-primary)]">
-                  {{ currentSnowballRun.proposal_summary.topic || sessionStore.currentSession?.title || 'Current topic' }}
-                </div>
-                <div class="mt-2 flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
-                  <span class="capsule">Budget {{ currentSnowballRun.proposal_summary.estimated_candidate_budget ?? 0 }}</span>
-                  <span class="capsule">Verified {{ currentSnowballRun.stats.verified_count ?? 0 }}</span>
-                  <span class="capsule">High-confidence {{ currentSnowballRun.stats.high_confidence_count ?? 0 }}</span>
-                </div>
-              </div>
-
-              <div v-if="currentSnowballRun.proposal_summary.seed_papers?.length" class="space-y-2">
-                <div class="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Seed papers</div>
-                <div
-                  v-for="seed in currentSnowballRun.proposal_summary.seed_papers.slice(0, 4)"
-                  :key="seed.paper_id"
-                  class="rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3"
-                >
-                  <div class="text-sm font-semibold text-[var(--text-primary)] line-clamp-2">{{ seed.title }}</div>
-                  <div class="mt-1 text-xs text-[var(--text-muted)]">{{ seed.year ?? 'Unknown year' }} | {{ seed.citation_count }} cites</div>
-                </div>
-              </div>
-
-              <div
-                v-if="currentSnowballRun.status === 'awaiting_review' && snowballPreview.length"
-                class="space-y-2"
-              >
-                <div class="flex items-center justify-between gap-3">
-                  <div class="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Pending candidates</div>
-                  <span class="capsule">Selected {{ selectedSnowballCount }}</span>
-                </div>
-
-                <div
-                  v-for="candidate in snowballPreview"
-                  :key="candidate.id"
-                  class="rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3"
-                >
-                  <label class="flex items-start gap-3">
-                    <input
-                      type="checkbox"
-                      class="mt-1 accent-[var(--accent-primary)]"
-                      :checked="selectedSnowballIds.has(candidate.id)"
-                      @change="toggleSnowballCandidate(candidate.id)"
-                    />
-                    <div class="min-w-0">
-                      <div class="text-sm font-semibold text-[var(--text-primary)] line-clamp-2">{{ candidate.title }}</div>
-                      <div class="mt-1 text-xs text-[var(--text-muted)]">
-                        {{ candidate.direction }} | {{ candidate.year ?? 'n/a' }} | {{ candidate.citation_count }} cites | score {{ (candidate.relevance_score ?? 0).toFixed(2) }}
-                      </div>
-                      <div class="mt-1 text-xs text-[var(--text-secondary)]">{{ candidate.relevance_reason }}</div>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              <div class="flex flex-wrap gap-2">
-                <button
-                  v-if="currentSnowballRun.status === 'proposed'"
-                  class="glass-btn"
-                  :disabled="Boolean(snowballBusyAction)"
-                  @click="handleSnowballAction('prepare_review')"
-                >
-                  {{ snowballBusyAction === 'prepare_review' ? 'Preparing...' : 'Review first' }}
-                </button>
-                <button
-                  v-if="['proposed', 'awaiting_review'].includes(currentSnowballRun.status)"
-                  class="glass-btn glass-btn-primary"
-                  :disabled="Boolean(snowballBusyAction)"
-                  @click="handleSnowballAction('approve_high_confidence')"
-                >
-                  {{ snowballBusyAction === 'approve_high_confidence' ? 'Importing...' : 'Import high-confidence' }}
-                </button>
-                <button
-                  v-if="['proposed', 'awaiting_review'].includes(currentSnowballRun.status)"
-                  class="glass-btn"
-                  :disabled="Boolean(snowballBusyAction)"
-                  @click="handleSnowballAction('approve_all')"
-                >
-                  {{ snowballBusyAction === 'approve_all' ? 'Importing...' : 'Import all' }}
-                </button>
-                <button
-                  v-if="currentSnowballRun.status === 'awaiting_review'"
-                  class="glass-btn"
-                  :disabled="Boolean(snowballBusyAction) || selectedSnowballCount === 0"
-                  @click="handleSnowballAction('approve_selected')"
-                >
-                  Import selected
-                </button>
-                <button
-                  v-if="currentSnowballRun.status === 'awaiting_review'"
-                  class="glass-btn"
-                  :disabled="Boolean(snowballBusyAction) || selectedSnowballCount === 0"
-                  @click="handleSnowballAction('reject_selected')"
-                >
-                  Reject selected
-                </button>
-                <button
-                  v-if="['proposed', 'awaiting_review'].includes(currentSnowballRun.status)"
-                  class="glass-btn"
-                  :disabled="Boolean(snowballBusyAction)"
-                  @click="handleSnowballAction('reject')"
-                >
-                  Skip snowball
-                </button>
+                Search, analysis, and report progress will stream into this panel as soon as the session starts moving.
               </div>
             </div>
           </GlassCard>

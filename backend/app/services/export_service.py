@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Paper
+from app.services.corpus_scope import primary_corpus_clause
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ class ExportService:
             select(Paper)
             .where(Paper.session_id == session_id)
             .where(Paper.is_included == True)
+            .where(primary_corpus_clause())
             .order_by(Paper.citation_count.desc())
         )
         return list(result.scalars().all())

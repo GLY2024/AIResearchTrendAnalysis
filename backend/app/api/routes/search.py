@@ -13,15 +13,24 @@ from app.db.models import SearchPlan, SnowballCandidate, SnowballRun
 from app.core.events import event_bus
 from app.core.task_manager import task_manager
 from app.agents.executor import executor_agent
-from app.agents.snowball import snowball_agent
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/search", tags=["search"])
 
 
+def _disable_snowball(plan_data: dict | None) -> dict | None:
+    if not isinstance(plan_data, dict):
+        return plan_data
+    next_plan = dict(plan_data)
+    snowball = dict(next_plan.get("snowball_config") or {})
+    snowball["enabled"] = False
+    next_plan["snowball_config"] = snowball
+    return next_plan
+
+
 async def _run_search_pipeline(plan_id: int):
-    """Background task: execute search plan + optional snowball."""
+    """Background task: execute search plan."""
     async with async_session() as db:
         plan = await db.get(SearchPlan, plan_id)
         if not plan:
@@ -30,12 +39,6 @@ async def _run_search_pipeline(plan_id: int):
         try:
             total = await executor_agent.execute_plan(plan, db)
             logger.info(f"Search plan {plan_id} completed: {total} papers")
-
-            # Create a snowball proposal after the main search completes.
-            if total > 0:
-                proposal = await snowball_agent.create_proposal(db, plan)
-                if proposal:
-                    logger.info(f"Snowball proposal created for plan {plan_id}: run {proposal.id}")
 
         except Exception as e:
             logger.error(f"Search pipeline failed for plan {plan_id}: {e}")
@@ -71,6 +74,7 @@ async def plan_action(plan_id: int, body: SearchPlanAction, db: AsyncSession = D
         raise HTTPException(404, "Search plan not found")
 
     if body.action == "approve":
+        plan.plan_data = _disable_snowball(plan.plan_data)
         plan.status = "approved"
         await db.commit()
         task_manager.submit(_run_search_pipeline(plan_id), task_id=f"search-{plan_id}")
@@ -82,7 +86,7 @@ async def plan_action(plan_id: int, body: SearchPlanAction, db: AsyncSession = D
     elif body.action == "modify":
         if body.plan_data is None:
             raise HTTPException(400, "plan_data is required for modify")
-        plan.plan_data = body.plan_data
+        plan.plan_data = _disable_snowball(body.plan_data)
         plan.status = "draft"
         await db.commit()
         await event_bus.emit("search_plan_modified", {"plan_id": plan_id}, session_id=str(plan.session_id))
@@ -163,20 +167,12 @@ def _serialize_snowball_candidate(candidate: SnowballCandidate) -> SnowballCandi
 
 @router.get("/snowball-runs", response_model=list[SnowballRunResponse])
 async def list_snowball_runs(session_id: int, db: AsyncSession = Depends(get_session)):
-    result = await db.execute(
-        select(SnowballRun)
-        .where(SnowballRun.session_id == session_id)
-        .order_by(SnowballRun.created_at.desc())
-    )
-    return [_serialize_snowball_run(run) for run in result.scalars().all()]
+    return []
 
 
 @router.get("/snowball-runs/{run_id}", response_model=SnowballRunResponse)
 async def get_snowball_run(run_id: int, db: AsyncSession = Depends(get_session)):
-    run = await db.get(SnowballRun, run_id)
-    if not run:
-        raise HTTPException(404, "Snowball run not found")
-    return _serialize_snowball_run(run)
+    raise HTTPException(410, "Snowball is disabled")
 
 
 @router.get("/snowball-runs/{run_id}/candidates", response_model=list[SnowballCandidateResponse])
@@ -187,47 +183,13 @@ async def list_snowball_candidates(
     offset: int = 0,
     db: AsyncSession = Depends(get_session),
 ):
-    stmt = select(SnowballCandidate).where(SnowballCandidate.run_id == run_id)
-    if status:
-        stmt = stmt.where(SnowballCandidate.status == status)
-    stmt = stmt.order_by(
-        SnowballCandidate.relevance_score.desc().nullslast(),
-        SnowballCandidate.citation_count.desc(),
-    ).offset(offset).limit(limit)
-    result = await db.execute(stmt)
-    return [_serialize_snowball_candidate(candidate) for candidate in result.scalars().all()]
+    return []
 
 
 async def _run_snowball_action(run_id: int, action: str, config: dict | None, candidate_ids: list[int] | None):
-    async with async_session() as db:
-        run = await db.get(SnowballRun, run_id)
-        if not run:
-            return
-        try:
-            await snowball_agent.apply_action(db, run, action, config_updates=config, candidate_ids=candidate_ids)
-        except Exception as exc:
-            logger.error(f"Snowball action failed for run {run_id}: {exc}")
-            run.status = "failed"
-            await db.commit()
-            await event_bus.emit("error", {
-                "message": f"Snowball failed: {exc}",
-                "run_id": run_id,
-            }, session_id=str(run.session_id))
+    return None
 
 
 @router.post("/snowball-runs/{run_id}/action", response_model=SnowballRunResponse)
 async def snowball_action(run_id: int, body: SnowballActionRequest, db: AsyncSession = Depends(get_session)):
-    run = await db.get(SnowballRun, run_id)
-    if not run:
-        raise HTTPException(404, "Snowball run not found")
-
-    if body.action == "reject":
-        updated = await snowball_agent.apply_action(db, run, body.action, body.config, body.candidate_ids)
-        await db.refresh(updated)
-        return _serialize_snowball_run(updated)
-
-    task_manager.submit(
-        _run_snowball_action(run_id, body.action, body.config, body.candidate_ids),
-        task_id=f"snowball-{run_id}-{body.action}",
-    )
-    return _serialize_snowball_run(run)
+    raise HTTPException(410, "Snowball is disabled")

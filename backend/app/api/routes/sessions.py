@@ -1,12 +1,13 @@
 """Research session CRUD routes."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.common import SessionCreate, SessionResponse, SessionUpdate
 from app.db.engine import get_session
 from app.db.models import Paper, ResearchSession
+from app.services.corpus_scope import primary_corpus_clause
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -18,7 +19,7 @@ async def list_sessions(db: AsyncSession = Depends(get_session)):
             ResearchSession,
             func.count(Paper.id).label("paper_count"),
         )
-        .outerjoin(Paper, Paper.session_id == ResearchSession.id)
+        .outerjoin(Paper, and_(Paper.session_id == ResearchSession.id, primary_corpus_clause()))
         .group_by(ResearchSession.id)
         .order_by(ResearchSession.updated_at.desc())
     )
@@ -48,7 +49,7 @@ async def get_session_detail(session_id: int, db: AsyncSession = Depends(get_ses
         raise HTTPException(404, "Session not found")
     # Get paper count
     count_result = await db.execute(
-        select(func.count()).where(Paper.session_id == session_id)
+        select(func.count()).where(Paper.session_id == session_id).where(primary_corpus_clause())
     )
     resp = SessionResponse.model_validate(session)
     resp.paper_count = count_result.scalar() or 0

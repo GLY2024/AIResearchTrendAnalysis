@@ -32,10 +32,10 @@ Respond with a JSON object following this exact structure:
   },
   "max_results_per_query": 100,
   "snowball_config": {
-    "enabled": true,
-    "max_hops": 2,
-    "directions": ["forward", "backward"],
-    "min_citation_threshold": 5
+    "enabled": false,
+    "max_hops": 0,
+    "directions": [],
+    "min_citation_threshold": 0
   },
   "inclusion_criteria": [
     "criterion 1",
@@ -73,11 +73,9 @@ Respond with a JSON object following this exact structure:
 - Set `to: null` for "up to present"
 
 ### Snowball Configuration
-- Enable for systematic reviews and trend analysis
-- Set `max_hops: 1` for focused reviews, `2` for comprehensive surveys
-- Use `forward` (who cites this?) for tracking influence
-- Use `backward` (what does this cite?) for finding foundational work
-- Higher `min_citation_threshold` (10+) for broad topics to avoid noise
+- Keep `enabled: false` in the current release
+- Set `max_hops: 0`, `directions: []`, and `min_citation_threshold: 0`
+- Do not propose citation expansion steps in this JSON
 
 ### Inclusion/Exclusion Criteria
 - Be specific and actionable

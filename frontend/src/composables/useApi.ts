@@ -86,7 +86,20 @@ export const searchApi = {
 // Papers
 export const paperApi = {
   list: (sessionId: number, params?: Record<string, unknown>) =>
-    api.get<PaperListPage>('/papers', { params: { session_id: sessionId, ...params } }).then(r => r.data),
+    api.get<PaperListPage | Paper[]>('/papers', { params: { session_id: sessionId, ...params } }).then((r) => {
+      if (Array.isArray(r.data)) {
+        const offset = Number(params?.offset ?? 0)
+        const limit = Number(params?.limit ?? r.data.length)
+        return {
+          items: r.data,
+          total: offset + r.data.length,
+          limit,
+          offset,
+        } satisfies PaperListPage
+      }
+
+      return r.data
+    }),
   get: (id: number) => api.get<Paper>(`/papers/${id}`).then(r => r.data),
   update: (id: number, data: Partial<Paper>) =>
     api.patch<Paper>(`/papers/${id}`, data).then(r => r.data),

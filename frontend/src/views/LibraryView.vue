@@ -69,6 +69,29 @@ function buildListParams() {
   }
 }
 
+function buildCountParams() {
+  return {
+    included_only: filterIncludedOnly.value || undefined,
+    year_from: filterYearFrom.value || undefined,
+    year_to: filterYearTo.value || undefined,
+    source: filterSource.value || undefined,
+    discovery_method: filterDiscovery.value || undefined,
+    search: searchQuery.value.trim() || undefined,
+  }
+}
+
+function paperAuthors(paper: Paper) {
+  return Array.isArray(paper.authors) ? paper.authors : []
+}
+
+function paperKeywords(paper: Paper) {
+  return Array.isArray(paper.keywords) ? paper.keywords : []
+}
+
+function paperFields(paper: Paper) {
+  return Array.isArray(paper.fields) ? paper.fields : []
+}
+
 async function loadPapers() {
   if (!sessionStore.currentSession) return
 
@@ -76,19 +99,21 @@ async function loadPapers() {
   actionError.value = ''
   try {
     const params = buildListParams()
-    const [page, total, included, response] = await Promise.all([
+    const countParams = buildCountParams()
+    const [page, filteredCount, total, included, response] = await Promise.all([
       paperApi.list(sessionStore.currentSession.id, params),
+      paperApi.count(sessionStore.currentSession.id, countParams),
       paperApi.count(sessionStore.currentSession.id),
       paperApi.count(sessionStore.currentSession.id, { included_only: true }),
       paperApi.sources(sessionStore.currentSession.id),
     ])
 
-    papers.value = page.items
-    filteredTotal.value = page.total
+    papers.value = Array.isArray(page.items) ? page.items : []
+    filteredTotal.value = filteredCount.count
     totalPapers.value = total.count
     includedTotal.value = included.count
     availableSources.value = response.sources
-    availableMethods.value = response.discovery_methods
+    availableMethods.value = response.discovery_methods.filter((method) => !method.includes('snowball'))
 
     if (currentPage.value > pageCount.value) {
       currentPage.value = pageCount.value
@@ -414,8 +439,8 @@ onMounted(loadPapers)
                         {{ paper.title }}
                       </td>
                       <td class="max-w-[260px] truncate p-3 text-[var(--text-secondary)]" @click="expandedId = expandedId === paper.id ? null : paper.id">
-                        {{ paper.authors.slice(0, 3).map((author) => author.name).join(', ') }}
-                        {{ paper.authors.length > 3 ? ` +${paper.authors.length - 3}` : '' }}
+                        {{ paperAuthors(paper).slice(0, 3).map((author) => author.name).join(', ') }}
+                        {{ paperAuthors(paper).length > 3 ? ` +${paperAuthors(paper).length - 3}` : '' }}
                       </td>
                       <td class="p-3 text-[var(--text-secondary)]">{{ paper.year ?? '-' }}</td>
                       <td class="p-3 text-[var(--text-secondary)]">{{ paper.citation_count }}</td>
@@ -432,10 +457,10 @@ onMounted(loadPapers)
                             </p>
                           </div>
 
-                          <div v-if="paper.keywords?.length">
+                          <div v-if="paperKeywords(paper).length">
                             <h5 class="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Keywords</h5>
                             <div class="flex flex-wrap gap-2">
-                              <span v-for="keyword in paper.keywords" :key="keyword" class="badge badge-info">{{ keyword }}</span>
+                              <span v-for="keyword in paperKeywords(paper)" :key="keyword" class="badge badge-info">{{ keyword }}</span>
                             </div>
                           </div>
 
@@ -448,9 +473,9 @@ onMounted(loadPapers)
                               <div class="text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Found via</div>
                               <div class="mt-1 text-sm text-[var(--text-primary)]">{{ paper.discovery_method }}</div>
                             </div>
-                            <div v-if="paper.fields?.length" class="callout">
+                            <div v-if="paperFields(paper).length" class="callout">
                               <div class="text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Fields</div>
-                              <div class="mt-1 text-sm text-[var(--text-primary)]">{{ paper.fields.join(', ') }}</div>
+                              <div class="mt-1 text-sm text-[var(--text-primary)]">{{ paperFields(paper).join(', ') }}</div>
                             </div>
                             <div v-if="paper.doi" class="callout">
                               <div class="text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">DOI</div>

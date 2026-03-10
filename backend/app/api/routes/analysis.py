@@ -12,6 +12,7 @@ from app.db.engine import async_session, get_session
 from app.db.models import AnalysisRun, Paper
 from app.core.task_manager import task_manager
 from app.agents.analyst import analyst_agent
+from app.services.corpus_scope import primary_corpus_clause
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ async def _compute_corpus_signature(db: AsyncSession, session_id: int) -> tuple[
         select(Paper.id, Paper.updated_at)
         .where(Paper.session_id == session_id)
         .where(Paper.is_included == True)
+        .where(primary_corpus_clause())
         .order_by(Paper.id)
     )
     rows = result.all()

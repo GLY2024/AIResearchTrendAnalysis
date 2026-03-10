@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.events import event_bus
 from app.db.models import AnalysisRun, AppSetting, Paper, Report
 from app.services.ai_service import ai_service
+from app.services.corpus_scope import primary_corpus_clause
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class PublisherAgent:
             select(Paper)
             .where(Paper.session_id == report.session_id)
             .where(Paper.is_included == True)
+            .where(primary_corpus_clause())
             .order_by(Paper.citation_count.desc())
         )
         papers = papers_result.scalars().all()
