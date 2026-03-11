@@ -8,7 +8,7 @@ if getattr(sys, "frozen", False):
     # Running as packaged executable (may be in binaries/ subdir)
     exe_dir = os.path.dirname(sys.executable)
     app_root = os.path.dirname(exe_dir) if os.path.basename(exe_dir) == "binaries" else exe_dir
-    os.environ.setdefault("ARTA_DATA_DIR", os.path.join(app_root, "ddata"))
+    os.environ.setdefault("ARTA_DATA_DIR", os.path.join(app_root, "data"))
     os.chdir(app_root)
     # Strip \\?\ prefix if present (Windows UNC extended path)
     data_dir = os.environ.get("ARTA_DATA_DIR", "")

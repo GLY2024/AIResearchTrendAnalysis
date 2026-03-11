@@ -100,7 +100,7 @@ class ModelsResponse(BaseModel):
 
 @router.get("/models", response_model=ModelsResponse)
 async def list_provider_models(
-    provider: str = Query(..., description="Provider id: openai or anthropic"),
+    provider: str = Query(..., description="Provider id: openai, anthropic, or openrouter"),
     db: AsyncSession = Depends(get_session),
 ):
     """Fetch available models from a provider's /models endpoint."""
@@ -128,7 +128,7 @@ async def list_provider_models(
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            # All providers use OpenAI-compatible /models endpoint
+            # Providers listed in key_map expose an OpenAI-compatible /models endpoint
             resp = await client.get(
                 f"{base_url}/models",
                 headers={"Authorization": f"Bearer {api_key}"},
