@@ -27,7 +27,16 @@ def run_trend_analysis(papers: list) -> tuple[dict, list]:
 
     sorted_years = sorted(year_data.keys())
     if len(sorted_years) < 2:
-        return {"yearly_data": {}, "trends": []}, []
+        return {
+            "yearly_data": {
+                str(y): {"count": year_data[y]["count"], "citations": year_data[y]["citations"]}
+                for y in sorted_years
+            },
+            "growth_trend": "insufficient_data",
+            "early_avg_papers_per_year": 0.0,
+            "late_avg_papers_per_year": 0.0,
+            "emerging_keywords": [],
+        }, []
 
     # Compute cumulative counts and moving averages
     cumulative = []
